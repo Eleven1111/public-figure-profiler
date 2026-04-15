@@ -7,3 +7,9 @@ venv/
 profiles/
 *.egg-info/
 .DS_Store
+.pytest_cache/
+*.log
+.coverage
+htmlcov/
+dist/
+build/
