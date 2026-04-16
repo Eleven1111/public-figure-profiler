@@ -181,3 +181,169 @@ def write_outputs(
     if json_data is not None:
         print(f"✓ JSON   : {out / f'{slug}_{date_str}.json'}", file=sys.stderr)
     print(f"✓ Corpus : {corpus_dir}/", file=sys.stderr)
+
+
+def run_analysis(
+    person: str,
+    purpose: str,
+    mode: str,
+    corpus_sources: list[dict],
+    adequacy: str,
+    system_prompt: str,
+) -> tuple[str, str | None]:
+    """调用 Claude API 执行分析，返回 (markdown, json_or_none)。"""
+    client = anthropic.Anthropic()
+
+    adequacy_notes = {
+        "sufficient": "",
+        "sparse": "\n⚠️ 语料偏少（A/B级来源不足3篇），整体置信度上限为「中」。",
+        "insufficient": (
+            "\n⚠️ 语料不足（仅有C/D级来源），"
+            "所有结论置信度最高为「低」，以探索性草稿模式输出。"
+        ),
+    }
+
+    corpus_text = "\n\n---\n\n".join(
+        f"[来源 {i + 1} | 等级: {s['grade']} | {s.get('source', '用户提供')}]\n{s['content']}"
+        for i, s in enumerate(corpus_sources)
+    )
+
+    user_message = (
+        f"请对以下公开人物进行{'完整' if mode == 'deep' else '快速'}心理侧写分析。\n\n"
+        f"**分析目标：** {person}\n"
+        f"**分析目的：** {purpose}\n"
+        f"**分析模式：** {mode.upper()} MODE"
+        f"{adequacy_notes[adequacy]}\n\n"
+        f"**已收集语料（共 {len(corpus_sources)} 篇）：**\n\n"
+        f"{corpus_text if corpus_sources else '（无预置语料，请通过 WebSearch/WebFetch 自行获取）'}\n\n"
+        "请严格按照 AGENT.md 中的 Step 0 → Step 7 流程执行，输出完整报告。\n"
+        "在报告末尾，输出一个 ```json ... ``` 代码块，包含符合 output-schema.md 的结构化数据。"
+    )
+
+    response = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=8192,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_message}],
+    )
+
+    full_text = response.content[0].text
+    return extract_json_from_response(full_text)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Public Figure Profiler — 公开人物心理侧写",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例：
+  python -m agent.agent --person "Jensen Huang" --mode deep --purpose "竞争对手研究"
+  python -m agent.agent --person "任正非" --mode quick --corpus speech.txt
+  python -m agent.agent --person "Sam Altman" --mode deep --corpus interview1.txt --corpus interview2.txt
+        """,
+    )
+    parser.add_argument("--person", required=True, help="分析对象的姓名（中英文均可）")
+    parser.add_argument("--purpose", default="general research", help="分析目的")
+    parser.add_argument(
+        "--mode", choices=["quick", "deep"], default="deep", help="分析深度"
+    )
+    parser.add_argument(
+        "--corpus",
+        action="append",
+        default=[],
+        metavar="FILE",
+        help="额外语料文件路径（可多次指定）",
+    )
+    parser.add_argument(
+        "--output-dir", default="./profiles", help="输出目录（默认：./profiles）"
+    )
+    parser.add_argument(
+        "--youtube",
+        action="append",
+        default=[],
+        metavar="URL",
+        help="YouTube 视频 URL，自动提取字幕作为语料（可多次指定）",
+    )
+    parser.add_argument(
+        "--transcribe",
+        choices=["whisper", "assemblyai"],
+        help="音频转录后端（可选）",
+    )
+
+    args = parser.parse_args()
+
+    # 路径定位
+    base = Path(__file__).parent.parent
+    agent_md_path = base / "agent" / "AGENT.md"
+    codebook_path = base / "references" / "codebook.md"
+    schema_path = base / "references" / "output-schema.md"
+
+    for p in [agent_md_path, codebook_path, schema_path]:
+        if not p.exists():
+            print(f"Error: required file not found: {p}", file=sys.stderr)
+            sys.exit(1)
+
+    agent_md = agent_md_path.read_text(encoding="utf-8")
+    codebook = codebook_path.read_text(encoding="utf-8")
+    output_schema = schema_path.read_text(encoding="utf-8")
+    system_prompt = build_system_prompt(agent_md, codebook, output_schema)
+
+    # 语料收集
+    print("[1/3] 加载用户提供的语料...", file=sys.stderr)
+    sources = load_user_corpus(args.corpus)
+
+    # YouTube 字幕提取
+    if args.youtube:
+        print(f"      提取 {len(args.youtube)} 个 YouTube 视频字幕...", file=sys.stderr)
+        for url in args.youtube:
+            transcript = fetch_youtube_transcript(url)
+            if transcript:
+                sources.append({
+                    "grade": "A",
+                    "source": url,
+                    "content": transcript,
+                    "word_count": len(transcript.split()),
+                })
+                print(f"      ✓ {url[:60]}...", file=sys.stderr)
+            else:
+                print(f"      ✗ 无法提取字幕：{url[:60]}", file=sys.stderr)
+
+    adequacy = assess_corpus_adequacy(sources)
+    ab_count = sum(1 for s in sources if s.get("grade") in ("A", "B"))
+    print(
+        f"[2/3] 语料状态: {adequacy}（A/B级: {ab_count}篇，共 {len(sources)} 篇）",
+        file=sys.stderr,
+    )
+
+    if adequacy == "insufficient" and not sources:
+        print(
+            "      → 无预置语料，agent 将通过 WebSearch 自行获取。",
+            file=sys.stderr,
+        )
+
+    # 执行分析
+    slug = make_slug(args.person)
+    date_str = datetime.now().strftime("%Y%m%d")
+
+    print("[3/3] 调用 Claude API 执行分析...", file=sys.stderr)
+    markdown, json_data = run_analysis(
+        person=args.person,
+        purpose=args.purpose,
+        mode=args.mode,
+        corpus_sources=sources,
+        adequacy=adequacy,
+        system_prompt=system_prompt,
+    )
+
+    write_outputs(
+        output_dir=args.output_dir,
+        slug=slug,
+        date_str=date_str,
+        markdown=markdown,
+        json_data=json_data,
+        sources=sources,
+    )
+
+
+if __name__ == "__main__":
+    main()
