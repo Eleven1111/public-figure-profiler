@@ -4,10 +4,14 @@ Public Figure Profiler — Hermes Agent CLI
 
 对任意公开人物进行心理侧写分析。
 混合语料获取：用户提供 → WebSearch/WebFetch → YouTube 转录 → 音频转录（可选）。
+支持多 LLM 后端：Anthropic、OpenAI、任意 OpenAI 兼容平台。
 
 用法：
   python -m agent.agent --person "Dario Amodei" --mode deep --purpose "投资尽调"
   python -m agent.agent --person "任正非" --mode quick --corpus interview.txt
+  python -m agent.agent --person "Jensen Huang" --provider openai --model gpt-4o
+  python -m agent.agent --person "李飞飞" --provider compatible \
+      --base-url https://api.deepseek.com/v1 --model deepseek-chat
 """
 
 import argparse
@@ -19,10 +23,19 @@ from datetime import datetime
 from pathlib import Path
 
 import anthropic
+import openai
 from youtube_transcript_api import YouTubeTranscriptApi
 
 
-# ── 工具函数 ────────────────────────────────────────────────────────────────
+# ── 常量 ────────────────────────────────────────────────────────────────────
+
+DEFAULT_MODELS: dict[str, str] = {
+    "anthropic": "claude-opus-4-6",
+    "openai": "gpt-4o",
+    # "compatible" 无内置默认，用户必须通过 --model 指定
+}
+
+# ── 语料工具函数 ─────────────────────────────────────────────────────────────
 
 
 def make_slug(name: str) -> str:
@@ -98,6 +111,9 @@ def fetch_youtube_transcript(url: str) -> str | None:
         return None
 
 
+# ── 提示词构建 ───────────────────────────────────────────────────────────────
+
+
 def build_system_prompt(agent_md: str, codebook: str, output_schema: str) -> str:
     """将三个指令文件合并为 system prompt。"""
     return f"""{agent_md}
@@ -114,6 +130,141 @@ def build_system_prompt(agent_md: str, codebook: str, output_schema: str) -> str
 
 {output_schema}
 """
+
+
+def build_user_message(
+    person: str,
+    purpose: str,
+    mode: str,
+    corpus_sources: list[dict],
+    adequacy: str,
+) -> str:
+    """构建分析请求的用户消息，与具体 LLM API 无关。"""
+    adequacy_notes = {
+        "sufficient": "",
+        "sparse": "\n⚠️ 语料偏少（A/B级来源不足3篇），整体置信度上限为「中」。",
+        "insufficient": (
+            "\n⚠️ 语料不足（仅有C/D级来源），"
+            "所有结论置信度最高为「低」，以探索性草稿模式输出。"
+        ),
+    }
+
+    corpus_text = "\n\n---\n\n".join(
+        f"[来源 {i + 1} | 等级: {s['grade']} | {s.get('source', '用户提供')}]\n{s['content']}"
+        for i, s in enumerate(corpus_sources)
+    )
+
+    return (
+        f"请对以下公开人物进行{'完整' if mode == 'deep' else '快速'}心理侧写分析。\n\n"
+        f"**分析目标：** {person}\n"
+        f"**分析目的：** {purpose}\n"
+        f"**分析模式：** {mode.upper()} MODE"
+        f"{adequacy_notes[adequacy]}\n\n"
+        f"**已收集语料（共 {len(corpus_sources)} 篇）：**\n\n"
+        f"{corpus_text if corpus_sources else '（无预置语料，请通过 WebSearch/WebFetch 自行获取）'}\n\n"
+        "请严格按照 AGENT.md 中的 Step 0 → Step 7 流程执行，输出完整报告。\n"
+        "在报告末尾，输出一个 ```json ... ``` 代码块，包含符合 output-schema.md 的结构化数据。"
+    )
+
+
+# ── LLM API 调用层 ───────────────────────────────────────────────────────────
+
+
+def call_anthropic(system_prompt: str, user_message: str, model: str) -> str:
+    """调用 Anthropic API，返回原始响应文本。
+
+    API Key 从环境变量 ANTHROPIC_API_KEY 读取。
+    """
+    client = anthropic.Anthropic()
+    response = client.messages.create(
+        model=model,
+        max_tokens=8192,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_message}],
+    )
+    return response.content[0].text
+
+
+def call_openai_compatible(
+    system_prompt: str,
+    user_message: str,
+    model: str,
+    api_key: str,
+    base_url: str | None = None,
+) -> str:
+    """调用 OpenAI 或 OpenAI 兼容 API，返回原始响应文本。
+
+    base_url=None  →  OpenAI 官方端点
+    base_url 传值  →  任意兼容平台，如：
+      DeepSeek:    https://api.deepseek.com/v1
+      月之暗面:    https://api.moonshot.cn/v1
+      通义千问:    https://dashscope.aliyuncs.com/compatible-mode/v1
+      零一万物:    https://api.lingyiwanwu.com/v1
+      Groq:        https://api.groq.com/openai/v1
+    """
+    client = openai.OpenAI(api_key=api_key, base_url=base_url)
+    response = client.chat.completions.create(
+        model=model,
+        max_tokens=8192,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+    )
+    return response.choices[0].message.content
+
+
+def run_analysis(
+    person: str,
+    purpose: str,
+    mode: str,
+    corpus_sources: list[dict],
+    adequacy: str,
+    system_prompt: str,
+    provider: str = "anthropic",
+    model: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> tuple[str, str | None]:
+    """调用 LLM API 执行分析，返回 (markdown, json_or_none)。
+
+    provider:
+        "anthropic"  — Anthropic SDK（默认）；API Key: ANTHROPIC_API_KEY
+        "openai"     — OpenAI 官方 API；API Key: OPENAI_API_KEY
+        "compatible" — 任意 OpenAI 兼容平台；需提供 --base-url；
+                       API Key 优先取 --api-key，其次取 PROFILER_API_KEY
+    """
+    effective_model = model or DEFAULT_MODELS.get(provider)
+    if not effective_model:
+        raise ValueError(
+            f"--model 未指定。provider='{provider}' 无内置默认模型，请通过 --model 指定。"
+        )
+
+    user_message = build_user_message(person, purpose, mode, corpus_sources, adequacy)
+
+    if provider == "anthropic":
+        full_text = call_anthropic(
+            system_prompt=system_prompt,
+            user_message=user_message,
+            model=effective_model,
+        )
+    elif provider in ("openai", "compatible"):
+        env_key = "OPENAI_API_KEY" if provider == "openai" else "PROFILER_API_KEY"
+        effective_key = api_key or os.environ.get(env_key, "")
+        full_text = call_openai_compatible(
+            system_prompt=system_prompt,
+            user_message=user_message,
+            model=effective_model,
+            api_key=effective_key,
+            base_url=base_url,
+        )
+    else:
+        raise ValueError(f"未知 provider: {provider!r}，支持：anthropic / openai / compatible")
+
+    return extract_json_from_response(full_text)
+
+
+# ── 输出写入 ─────────────────────────────────────────────────────────────────
 
 
 def extract_json_from_response(full_text: str) -> tuple[str, str | None]:
@@ -183,52 +334,7 @@ def write_outputs(
     print(f"✓ Corpus : {corpus_dir}/", file=sys.stderr)
 
 
-def run_analysis(
-    person: str,
-    purpose: str,
-    mode: str,
-    corpus_sources: list[dict],
-    adequacy: str,
-    system_prompt: str,
-) -> tuple[str, str | None]:
-    """调用 Claude API 执行分析，返回 (markdown, json_or_none)。"""
-    client = anthropic.Anthropic()
-
-    adequacy_notes = {
-        "sufficient": "",
-        "sparse": "\n⚠️ 语料偏少（A/B级来源不足3篇），整体置信度上限为「中」。",
-        "insufficient": (
-            "\n⚠️ 语料不足（仅有C/D级来源），"
-            "所有结论置信度最高为「低」，以探索性草稿模式输出。"
-        ),
-    }
-
-    corpus_text = "\n\n---\n\n".join(
-        f"[来源 {i + 1} | 等级: {s['grade']} | {s.get('source', '用户提供')}]\n{s['content']}"
-        for i, s in enumerate(corpus_sources)
-    )
-
-    user_message = (
-        f"请对以下公开人物进行{'完整' if mode == 'deep' else '快速'}心理侧写分析。\n\n"
-        f"**分析目标：** {person}\n"
-        f"**分析目的：** {purpose}\n"
-        f"**分析模式：** {mode.upper()} MODE"
-        f"{adequacy_notes[adequacy]}\n\n"
-        f"**已收集语料（共 {len(corpus_sources)} 篇）：**\n\n"
-        f"{corpus_text if corpus_sources else '（无预置语料，请通过 WebSearch/WebFetch 自行获取）'}\n\n"
-        "请严格按照 AGENT.md 中的 Step 0 → Step 7 流程执行，输出完整报告。\n"
-        "在报告末尾，输出一个 ```json ... ``` 代码块，包含符合 output-schema.md 的结构化数据。"
-    )
-
-    response = client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=8192,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_message}],
-    )
-
-    full_text = response.content[0].text
-    return extract_json_from_response(full_text)
+# ── CLI 入口 ─────────────────────────────────────────────────────────────────
 
 
 def main() -> None:
@@ -237,15 +343,48 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例：
+  # 使用 Anthropic（默认）
   python -m agent.agent --person "Jensen Huang" --mode deep --purpose "竞争对手研究"
-  python -m agent.agent --person "任正非" --mode quick --corpus speech.txt
-  python -m agent.agent --person "Sam Altman" --mode deep --corpus interview1.txt --corpus interview2.txt
+
+  # 使用 OpenAI
+  python -m agent.agent --person "Sam Altman" --provider openai --model gpt-4o
+
+  # 使用 DeepSeek（兼容模式）
+  python -m agent.agent --person "李飞飞" --provider compatible \\
+      --base-url https://api.deepseek.com/v1 --model deepseek-chat
+
+  # 附加自有语料 + YouTube 字幕
+  python -m agent.agent --person "任正非" --mode deep \\
+      --corpus speech.txt --youtube "https://youtube.com/watch?v=VIDEO_ID"
         """,
     )
     parser.add_argument("--person", required=True, help="分析对象的姓名（中英文均可）")
     parser.add_argument("--purpose", default="general research", help="分析目的")
     parser.add_argument(
         "--mode", choices=["quick", "deep"], default="deep", help="分析深度"
+    )
+    parser.add_argument(
+        "--provider",
+        choices=["anthropic", "openai", "compatible"],
+        default="anthropic",
+        help="LLM 后端（默认：anthropic）",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="模型名称（覆盖默认；compatible 模式下必填）",
+    )
+    parser.add_argument(
+        "--base-url",
+        default=None,
+        metavar="URL",
+        help="OpenAI 兼容平台的 API 基础 URL（provider=compatible 时使用）",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        metavar="KEY",
+        help="API Key（可选；默认从对应环境变量读取）",
     )
     parser.add_argument(
         "--corpus",
@@ -271,6 +410,14 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+
+    # compatible 模式强制要求 --base-url
+    if args.provider == "compatible" and not args.base_url:
+        parser.error("--provider compatible 需要同时指定 --base-url")
+
+    # compatible 模式强制要求 --model
+    if args.provider == "compatible" and not args.model:
+        parser.error("--provider compatible 需要同时指定 --model")
 
     # 路径定位
     base = Path(__file__).parent.parent
@@ -325,7 +472,10 @@ def main() -> None:
     slug = make_slug(args.person)
     date_str = datetime.now().strftime("%Y%m%d")
 
-    print("[3/3] 调用 Claude API 执行分析...", file=sys.stderr)
+    provider_label = args.provider
+    model_label = args.model or DEFAULT_MODELS.get(args.provider, "?")
+    print(f"[3/3] 调用 {provider_label} / {model_label} 执行分析...", file=sys.stderr)
+
     markdown, json_data = run_analysis(
         person=args.person,
         purpose=args.purpose,
@@ -333,6 +483,10 @@ def main() -> None:
         corpus_sources=sources,
         adequacy=adequacy,
         system_prompt=system_prompt,
+        provider=args.provider,
+        model=args.model,
+        api_key=args.api_key,
+        base_url=args.base_url,
     )
 
     write_outputs(

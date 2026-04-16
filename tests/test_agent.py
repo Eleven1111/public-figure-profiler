@@ -268,3 +268,280 @@ class TestExtractJsonFromResponse:
 
         assert json_data is None
         assert markdown == "Analysis without JSON block."
+
+
+# ── 多 Provider API 集成测试 ───────────────────────────────────────────────
+
+
+class TestBuildUserMessage:
+    """build_user_message 应与 API 无关，只做字符串组装。"""
+
+    def test_contains_person_name(self):
+        from agent.agent import build_user_message
+
+        msg = build_user_message("Jensen Huang", "投资尽调", "deep", [], "insufficient")
+        assert "Jensen Huang" in msg
+
+    def test_contains_purpose(self):
+        from agent.agent import build_user_message
+
+        msg = build_user_message("X", "竞争对手研究", "deep", [], "sufficient")
+        assert "竞争对手研究" in msg
+
+    def test_deep_mode_label(self):
+        from agent.agent import build_user_message
+
+        msg = build_user_message("X", "Y", "deep", [], "sufficient")
+        assert "DEEP MODE" in msg
+
+    def test_quick_mode_label(self):
+        from agent.agent import build_user_message
+
+        msg = build_user_message("X", "Y", "quick", [], "sufficient")
+        assert "QUICK MODE" in msg
+
+    def test_sparse_adequacy_warning(self):
+        from agent.agent import build_user_message
+
+        msg = build_user_message("X", "Y", "deep", [], "sparse")
+        assert "语料偏少" in msg
+
+    def test_insufficient_adequacy_warning(self):
+        from agent.agent import build_user_message
+
+        msg = build_user_message("X", "Y", "deep", [], "insufficient")
+        assert "探索性草稿" in msg
+
+    def test_sufficient_no_warning(self):
+        from agent.agent import build_user_message
+
+        msg = build_user_message("X", "Y", "deep", [], "sufficient")
+        assert "语料偏少" not in msg
+        assert "探索性草稿" not in msg
+
+    def test_corpus_sources_included(self):
+        from agent.agent import build_user_message
+
+        sources = [{"grade": "A", "source": "https://example.com", "content": "transcript text"}]
+        msg = build_user_message("X", "Y", "deep", sources, "sufficient")
+        assert "transcript text" in msg
+        assert "等级: A" in msg
+
+    def test_empty_corpus_placeholder(self):
+        from agent.agent import build_user_message
+
+        msg = build_user_message("X", "Y", "deep", [], "insufficient")
+        assert "WebSearch" in msg
+
+
+class TestCallAnthropicAPI:
+    """call_anthropic 应正确调用 Anthropic SDK 并返回文本。"""
+
+    def test_returns_text_from_response(self, mocker):
+        from agent.agent import call_anthropic
+
+        mock_response = mocker.MagicMock()
+        mock_response.content = [mocker.MagicMock(text="Analysis result")]
+        mock_client = mocker.MagicMock()
+        mock_client.messages.create.return_value = mock_response
+        mocker.patch("agent.agent.anthropic.Anthropic", return_value=mock_client)
+
+        result = call_anthropic("system", "user msg", "claude-opus-4-6")
+
+        assert result == "Analysis result"
+
+    def test_passes_correct_model(self, mocker):
+        from agent.agent import call_anthropic
+
+        mock_response = mocker.MagicMock()
+        mock_response.content = [mocker.MagicMock(text="ok")]
+        mock_client = mocker.MagicMock()
+        mock_client.messages.create.return_value = mock_response
+        mocker.patch("agent.agent.anthropic.Anthropic", return_value=mock_client)
+
+        call_anthropic("sys", "usr", "claude-haiku-4-5-20251001")
+
+        call_kwargs = mock_client.messages.create.call_args
+        assert call_kwargs.kwargs["model"] == "claude-haiku-4-5-20251001"
+
+    def test_passes_system_and_user(self, mocker):
+        from agent.agent import call_anthropic
+
+        mock_response = mocker.MagicMock()
+        mock_response.content = [mocker.MagicMock(text="ok")]
+        mock_client = mocker.MagicMock()
+        mock_client.messages.create.return_value = mock_response
+        mocker.patch("agent.agent.anthropic.Anthropic", return_value=mock_client)
+
+        call_anthropic("MY SYSTEM", "MY USER", "claude-opus-4-6")
+
+        call_kwargs = mock_client.messages.create.call_args
+        assert call_kwargs.kwargs["system"] == "MY SYSTEM"
+        assert call_kwargs.kwargs["messages"][0]["content"] == "MY USER"
+
+
+class TestCallOpenAICompatibleAPI:
+    """call_openai_compatible 应正确调用 OpenAI SDK，支持官方和自定义 base_url。"""
+
+    def _make_mock_openai(self, mocker, text="OpenAI result"):
+        mock_message = mocker.MagicMock()
+        mock_message.content = text
+        mock_choice = mocker.MagicMock()
+        mock_choice.message = mock_message
+        mock_response = mocker.MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_client = mocker.MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        return mock_client
+
+    def test_returns_text_from_response(self, mocker):
+        from agent.agent import call_openai_compatible
+
+        mock_client = self._make_mock_openai(mocker, "Result text")
+        mock_openai_cls = mocker.patch("agent.agent.openai.OpenAI", return_value=mock_client)
+
+        result = call_openai_compatible("system", "user", "gpt-4o", "sk-test")
+
+        assert result == "Result text"
+
+    def test_passes_base_url_to_client(self, mocker):
+        from agent.agent import call_openai_compatible
+
+        mock_client = self._make_mock_openai(mocker)
+        mock_openai_cls = mocker.patch("agent.agent.openai.OpenAI", return_value=mock_client)
+
+        call_openai_compatible(
+            "sys", "usr", "deepseek-chat", "sk-key",
+            base_url="https://api.deepseek.com/v1"
+        )
+
+        mock_openai_cls.assert_called_once_with(
+            api_key="sk-key",
+            base_url="https://api.deepseek.com/v1"
+        )
+
+    def test_no_base_url_passes_none(self, mocker):
+        from agent.agent import call_openai_compatible
+
+        mock_client = self._make_mock_openai(mocker)
+        mock_openai_cls = mocker.patch("agent.agent.openai.OpenAI", return_value=mock_client)
+
+        call_openai_compatible("sys", "usr", "gpt-4o", "sk-key")
+
+        mock_openai_cls.assert_called_once_with(api_key="sk-key", base_url=None)
+
+    def test_system_and_user_in_messages(self, mocker):
+        from agent.agent import call_openai_compatible
+
+        mock_client = self._make_mock_openai(mocker)
+        mocker.patch("agent.agent.openai.OpenAI", return_value=mock_client)
+
+        call_openai_compatible("SYS", "USR", "gpt-4o", "key")
+
+        messages = mock_client.chat.completions.create.call_args.kwargs["messages"]
+        assert messages[0] == {"role": "system", "content": "SYS"}
+        assert messages[1] == {"role": "user", "content": "USR"}
+
+
+class TestRunAnalysisProviderDispatch:
+    """run_analysis 应根据 provider 分发到正确的调用函数。"""
+
+    def test_anthropic_provider_calls_call_anthropic(self, mocker):
+        from agent.agent import run_analysis
+
+        mock_call = mocker.patch(
+            "agent.agent.call_anthropic", return_value="# Report\n```json\n{}\n```"
+        )
+        mocker.patch("agent.agent.build_user_message", return_value="user msg")
+
+        run_analysis(
+            person="X", purpose="Y", mode="deep",
+            corpus_sources=[], adequacy="sufficient",
+            system_prompt="sys", provider="anthropic",
+        )
+
+        mock_call.assert_called_once()
+
+    def test_openai_provider_calls_call_openai_compatible(self, mocker):
+        from agent.agent import run_analysis
+
+        mock_call = mocker.patch(
+            "agent.agent.call_openai_compatible", return_value="# Report"
+        )
+        mocker.patch("agent.agent.build_user_message", return_value="user msg")
+        mocker.patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"})
+
+        run_analysis(
+            person="X", purpose="Y", mode="quick",
+            corpus_sources=[], adequacy="sufficient",
+            system_prompt="sys", provider="openai",
+        )
+
+        mock_call.assert_called_once()
+        _, kwargs = mock_call.call_args
+        assert kwargs.get("base_url") is None
+
+    def test_compatible_provider_passes_base_url(self, mocker):
+        from agent.agent import run_analysis
+
+        mock_call = mocker.patch(
+            "agent.agent.call_openai_compatible", return_value="# Report"
+        )
+        mocker.patch("agent.agent.build_user_message", return_value="user msg")
+
+        run_analysis(
+            person="X", purpose="Y", mode="quick",
+            corpus_sources=[], adequacy="sufficient",
+            system_prompt="sys", provider="compatible",
+            model="deepseek-chat",
+            api_key="sk-ds",
+            base_url="https://api.deepseek.com/v1",
+        )
+
+        mock_call.assert_called_once()
+        _, kwargs = mock_call.call_args
+        assert kwargs["base_url"] == "https://api.deepseek.com/v1"
+        assert kwargs["api_key"] == "sk-ds"
+
+    def test_default_anthropic_model_used_when_model_not_specified(self, mocker):
+        from agent.agent import run_analysis, DEFAULT_MODELS
+
+        mock_call = mocker.patch(
+            "agent.agent.call_anthropic", return_value="# Report"
+        )
+        mocker.patch("agent.agent.build_user_message", return_value="msg")
+
+        run_analysis(
+            person="X", purpose="Y", mode="deep",
+            corpus_sources=[], adequacy="sufficient",
+            system_prompt="sys", provider="anthropic",
+        )
+
+        _, kwargs = mock_call.call_args
+        assert kwargs["model"] == DEFAULT_MODELS["anthropic"]
+
+    def test_compatible_provider_raises_without_model(self, mocker):
+        from agent.agent import run_analysis
+
+        mocker.patch("agent.agent.build_user_message", return_value="msg")
+
+        with pytest.raises(ValueError, match="--model"):
+            run_analysis(
+                person="X", purpose="Y", mode="deep",
+                corpus_sources=[], adequacy="sufficient",
+                system_prompt="sys", provider="compatible",
+                # no model specified — should raise
+            )
+
+    def test_unknown_provider_raises(self, mocker):
+        from agent.agent import run_analysis
+
+        mocker.patch("agent.agent.build_user_message", return_value="msg")
+
+        with pytest.raises(ValueError, match="未知 provider"):
+            run_analysis(
+                person="X", purpose="Y", mode="deep",
+                corpus_sources=[], adequacy="sufficient",
+                system_prompt="sys", provider="unknown_provider",
+                model="some-model",
+            )
