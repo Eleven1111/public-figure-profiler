@@ -96,3 +96,88 @@ def fetch_youtube_transcript(url: str) -> str | None:
         return " ".join(entry["text"] for entry in entries)
     except Exception:
         return None
+
+
+def build_system_prompt(agent_md: str, codebook: str, output_schema: str) -> str:
+    """将三个指令文件合并为 system prompt。"""
+    return f"""{agent_md}
+
+---
+
+## 分析框架参考（codebook.md）
+
+{codebook}
+
+---
+
+## 输出格式规范（output-schema.md）
+
+{output_schema}
+"""
+
+
+def extract_json_from_response(full_text: str) -> tuple[str, str | None]:
+    """从模型输出中提取 JSON 代码块。
+
+    Returns:
+        (markdown_without_json, json_string_or_none)
+    """
+    json_match = re.search(r"```json\n(.*?)\n```", full_text, re.DOTALL)
+    if not json_match:
+        return full_text, None
+
+    json_data = json_match.group(1)
+    markdown = re.sub(r"```json\n.*?\n```", "", full_text, flags=re.DOTALL).strip()
+    return markdown, json_data
+
+
+def write_outputs(
+    output_dir: str,
+    slug: str,
+    date_str: str,
+    markdown: str,
+    json_data: str | None,
+    sources: list[dict],
+) -> None:
+    """将分析结果写入磁盘。
+
+    输出：
+      {output_dir}/{slug}_{date_str}.md
+      {output_dir}/{slug}_{date_str}.json  （若有 JSON）
+      {output_dir}/{slug}_{date_str}_corpus/  （语料缓存）
+    """
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    md_path = out / f"{slug}_{date_str}.md"
+    md_path.write_text(markdown, encoding="utf-8")
+
+    if json_data is not None:
+        json_path = out / f"{slug}_{date_str}.json"
+        json_path.write_text(json_data, encoding="utf-8")
+
+    # 语料缓存目录
+    corpus_dir = out / f"{slug}_{date_str}_corpus"
+    corpus_dir.mkdir(exist_ok=True)
+
+    manifest = []
+    for i, s in enumerate(sources):
+        fname = f"source_{i + 1:02d}_{s['grade'].lower()}_grade.txt"
+        (corpus_dir / fname).write_text(s.get("content", ""), encoding="utf-8")
+        manifest.append(
+            {
+                "file": fname,
+                "grade": s.get("grade", ""),
+                "source": s.get("source", ""),
+                "word_count": s.get("word_count", 0),
+            }
+        )
+
+    (corpus_dir / "corpus_manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    print(f"✓ Report : {md_path}", file=sys.stderr)
+    if json_data is not None:
+        print(f"✓ JSON   : {out / f'{slug}_{date_str}.json'}", file=sys.stderr)
+    print(f"✓ Corpus : {corpus_dir}/", file=sys.stderr)

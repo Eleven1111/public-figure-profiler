@@ -140,3 +140,131 @@ class TestFetchYoutubeTranscript:
         from agent.agent import fetch_youtube_transcript
         result = fetch_youtube_transcript("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
         assert result is None
+
+
+class TestBuildSystemPrompt:
+    def test_combines_three_sections(self):
+        from agent.agent import build_system_prompt
+
+        result = build_system_prompt(
+            agent_md="AGENT INSTRUCTIONS",
+            codebook="CODEBOOK CONTENT",
+            output_schema="OUTPUT SCHEMA",
+        )
+
+        assert "AGENT INSTRUCTIONS" in result
+        assert "CODEBOOK CONTENT" in result
+        assert "OUTPUT SCHEMA" in result
+
+    def test_sections_separated(self):
+        from agent.agent import build_system_prompt
+
+        result = build_system_prompt("A", "B", "C")
+        # 三个部分之间应有分隔
+        assert result.index("A") < result.index("B") < result.index("C")
+
+
+class TestWriteOutputs:
+    def test_writes_markdown_file(self, tmp_path):
+        from agent.agent import write_outputs
+
+        write_outputs(
+            output_dir=str(tmp_path),
+            slug="test_person",
+            date_str="20260415",
+            markdown="# Test Report\n\nContent here.",
+            json_data=None,
+            sources=[],
+        )
+
+        md_file = tmp_path / "test_person_20260415.md"
+        assert md_file.exists()
+        assert md_file.read_text() == "# Test Report\n\nContent here."
+
+    def test_writes_json_file_when_provided(self, tmp_path):
+        from agent.agent import write_outputs
+
+        json_str = '{"subject": "Test Person"}'
+        write_outputs(
+            output_dir=str(tmp_path),
+            slug="test_person",
+            date_str="20260415",
+            markdown="# Report",
+            json_data=json_str,
+            sources=[],
+        )
+
+        json_file = tmp_path / "test_person_20260415.json"
+        assert json_file.exists()
+        assert json_file.read_text() == json_str
+
+    def test_no_json_file_when_none(self, tmp_path):
+        from agent.agent import write_outputs
+
+        write_outputs(
+            output_dir=str(tmp_path),
+            slug="p",
+            date_str="20260415",
+            markdown="# R",
+            json_data=None,
+            sources=[],
+        )
+
+        assert not (tmp_path / "p_20260415.json").exists()
+
+    def test_creates_corpus_manifest(self, tmp_path):
+        from agent.agent import write_outputs
+
+        sources = [
+            {"grade": "A", "source": "https://example.com", "content": "text", "word_count": 1},
+        ]
+        write_outputs(
+            output_dir=str(tmp_path),
+            slug="p",
+            date_str="20260415",
+            markdown="# R",
+            json_data=None,
+            sources=sources,
+        )
+
+        corpus_dir = tmp_path / "p_20260415_corpus"
+        assert corpus_dir.exists()
+        manifest = json.loads((corpus_dir / "corpus_manifest.json").read_text())
+        assert len(manifest) == 1
+        assert manifest[0]["grade"] == "A"
+
+    def test_creates_output_dir_if_not_exists(self, tmp_path):
+        from agent.agent import write_outputs
+
+        new_dir = tmp_path / "new" / "nested" / "dir"
+        write_outputs(
+            output_dir=str(new_dir),
+            slug="p",
+            date_str="20260415",
+            markdown="# R",
+            json_data=None,
+            sources=[],
+        )
+
+        assert (new_dir / "p_20260415.md").exists()
+
+
+class TestExtractJsonFromResponse:
+    def test_extracts_json_block(self):
+        from agent.agent import extract_json_from_response
+
+        text = 'Some analysis text.\n\n```json\n{"subject": "Test"}\n```\n\nMore text.'
+        markdown, json_data = extract_json_from_response(text)
+
+        assert json_data == '{"subject": "Test"}'
+        assert "```json" not in markdown
+        assert "Some analysis text." in markdown
+
+    def test_no_json_block_returns_none(self):
+        from agent.agent import extract_json_from_response
+
+        text = "Analysis without JSON block."
+        markdown, json_data = extract_json_from_response(text)
+
+        assert json_data is None
+        assert markdown == "Analysis without JSON block."
