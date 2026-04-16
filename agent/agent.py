@@ -114,8 +114,24 @@ def fetch_youtube_transcript(url: str) -> str | None:
 # ── 提示词构建 ───────────────────────────────────────────────────────────────
 
 
+_COMPACT_SYSTEM_PROMPT = """\
+你是专业的公开人物认知与心理分析助手，基于公开资料对目标人物进行侧写分析。
+
+核心规范：
+- Step 0：先写出你对该人物的既有印象（≤5条），分析完后说明哪些被证实/推翻
+- 每个结论必须附原始文本引证（直接引用原文，不接受裸形容词）
+- 跨情境一致出现的才算稳定特征；矛盾点是最高信号密度的材料
+- 置信度：高（≥3个跨情境引证）/ 中（1-2个）/ 低（推断）
+- 使用「在公开表达中呈现出……倾向」，不做临床诊断，不推测私人生活
+- 每个维度末尾必须给出行为预测：「在[具体情境]下，此人倾向于[具体行为]，因为[认知逻辑]」
+
+Quick Mode：给出3个核心发现 + 行为预测
+Deep Mode：完整报告（人格与行事风格 / 认知结构 / 心理表征与叙事 / 受众敏感度）+ 末尾输出 ```json ... ``` 结构化数据
+"""
+
+
 def build_system_prompt(agent_md: str, codebook: str, output_schema: str) -> str:
-    """将三个指令文件合并为 system prompt。"""
+    """将三个指令文件合并为完整 system prompt（全量模式）。"""
     return f"""{agent_md}
 
 ---
@@ -130,6 +146,11 @@ def build_system_prompt(agent_md: str, codebook: str, output_schema: str) -> str
 
 {output_schema}
 """
+
+
+def build_compact_system_prompt() -> str:
+    """返回精简版 system prompt（~200 tokens），适配小 context 模型。"""
+    return _COMPACT_SYSTEM_PROMPT
 
 
 def build_user_message(
@@ -408,6 +429,11 @@ def main() -> None:
         choices=["whisper", "assemblyai"],
         help="音频转录后端（可选）",
     )
+    parser.add_argument(
+        "--compact-prompt",
+        action="store_true",
+        help="使用精简版系统提示词（~200 tokens），适配小 context 模型（如 Groq 免费层）",
+    )
 
     args = parser.parse_args()
 
@@ -430,10 +456,14 @@ def main() -> None:
             print(f"Error: required file not found: {p}", file=sys.stderr)
             sys.exit(1)
 
-    agent_md = agent_md_path.read_text(encoding="utf-8")
-    codebook = codebook_path.read_text(encoding="utf-8")
-    output_schema = schema_path.read_text(encoding="utf-8")
-    system_prompt = build_system_prompt(agent_md, codebook, output_schema)
+    if args.compact_prompt:
+        system_prompt = build_compact_system_prompt()
+        print("      [精简提示词模式，~200 tokens]", file=sys.stderr)
+    else:
+        agent_md = agent_md_path.read_text(encoding="utf-8")
+        codebook = codebook_path.read_text(encoding="utf-8")
+        output_schema = schema_path.read_text(encoding="utf-8")
+        system_prompt = build_system_prompt(agent_md, codebook, output_schema)
 
     # 语料收集
     print("[1/3] 加载用户提供的语料...", file=sys.stderr)
