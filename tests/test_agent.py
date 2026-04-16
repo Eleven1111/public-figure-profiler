@@ -88,3 +88,55 @@ class TestAssessCorpusAdequacy:
     def test_2_ab_is_sparse(self):
         sources = [{"grade": "A"}, {"grade": "B"}]
         assert assess_corpus_adequacy(sources) == "sparse"
+
+
+class TestFetchYoutubeTranscript:
+    def _make_fetched_mock(self, mocker, raw_data):
+        """Helper: create a mock FetchedTranscript that returns raw_data."""
+        fetched_mock = mocker.MagicMock()
+        fetched_mock.to_raw_data.return_value = raw_data
+        return fetched_mock
+
+    def test_valid_youtube_url(self, mocker):
+        raw_data = [
+            {"text": "Hello world", "start": 0.0, "duration": 2.0},
+            {"text": "This is a test", "start": 2.0, "duration": 3.0},
+        ]
+        fetched_mock = self._make_fetched_mock(mocker, raw_data)
+        mocker.patch(
+            "agent.agent.YouTubeTranscriptApi.fetch",
+            return_value=fetched_mock,
+        )
+
+        from agent.agent import fetch_youtube_transcript
+        result = fetch_youtube_transcript("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
+        assert result == "Hello world This is a test"
+
+    def test_youtu_be_short_url(self, mocker):
+        raw_data = [{"text": "Short URL works", "start": 0.0, "duration": 1.0}]
+        fetched_mock = self._make_fetched_mock(mocker, raw_data)
+        mocker.patch(
+            "agent.agent.YouTubeTranscriptApi.fetch",
+            return_value=fetched_mock,
+        )
+
+        from agent.agent import fetch_youtube_transcript
+        result = fetch_youtube_transcript("https://youtu.be/dQw4w9WgXcQ")
+
+        assert result == "Short URL works"
+
+    def test_non_youtube_url_returns_none(self):
+        from agent.agent import fetch_youtube_transcript
+        result = fetch_youtube_transcript("https://example.com/not-youtube")
+        assert result is None
+
+    def test_api_failure_returns_none(self, mocker):
+        mocker.patch(
+            "agent.agent.YouTubeTranscriptApi.fetch",
+            side_effect=Exception("Transcript not available"),
+        )
+
+        from agent.agent import fetch_youtube_transcript
+        result = fetch_youtube_transcript("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        assert result is None

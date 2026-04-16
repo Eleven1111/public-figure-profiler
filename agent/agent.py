@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 import anthropic
+from youtube_transcript_api import YouTubeTranscriptApi
 
 
 # ── 工具函数 ────────────────────────────────────────────────────────────────
@@ -76,3 +77,22 @@ def assess_corpus_adequacy(sources: list[dict]) -> str:
         return "sparse"
     else:
         return "insufficient"
+
+
+def fetch_youtube_transcript(url: str) -> str | None:
+    """从 YouTube URL 提取字幕文本。
+
+    使用 youtube-transcript-api（无需 API Key）。
+    提取失败时静默返回 None，由调用方决定降级策略。
+    """
+    try:
+        match = re.search(r"(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})", url)
+        if not match:
+            return None
+
+        video_id = match.group(1)
+        fetched = YouTubeTranscriptApi().fetch(video_id)
+        entries = fetched.to_raw_data()
+        return " ".join(entry["text"] for entry in entries)
+    except Exception:
+        return None
