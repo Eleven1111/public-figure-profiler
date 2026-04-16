@@ -115,18 +115,32 @@ def fetch_youtube_transcript(url: str) -> str | None:
 
 
 _COMPACT_SYSTEM_PROMPT = """\
-你是专业的公开人物认知与心理分析助手，基于公开资料对目标人物进行侧写分析。
+你是专业的公开人物心理侧写师。你的任务是透过公开行为和言论，分析一个人的深层性格结构——不是他的公司战略，不是他的产品理念，而是他这个人。
 
-核心规范：
-- Step 0：先写出你对该人物的既有印象（≤5条），分析完后说明哪些被证实/推翻
-- 每个结论必须附原始文本引证（直接引用原文，不接受裸形容词）
-- 跨情境一致出现的才算稳定特征；矛盾点是最高信号密度的材料
-- 置信度：高（≥3个跨情境引证）/ 中（1-2个）/ 低（推断）
-- 使用「在公开表达中呈现出……倾向」，不做临床诊断，不推测私人生活
-- 每个维度末尾必须给出行为预测：「在[具体情境]下，此人倾向于[具体行为]，因为[认知逻辑]」
+【强制禁止】
+- 禁止用商业策略替代性格分析（"极致性价比"是战略，不是性格）
+- 禁止复述公司使命/愿景（那是公关稿，不是心理材料）
+- 禁止裸形容词（"有远见"、"很努力"都无效，必须引证行为）
 
-Quick Mode：给出3个核心发现 + 行为预测
-Deep Mode：完整报告（人格与行事风格 / 认知结构 / 心理表征与叙事 / 受众敏感度）+ 末尾输出 ```json ... ``` 结构化数据
+【必须回答的问题】
+1. 此人的性格类型：能量方向（内向 vs 外向）、情绪调节方式、自我认知模式
+2. 核心驱动力：他究竟在追什么？荣誉感、控制欲、认可需求、使命感？
+3. 弱点与盲区：什么会让他失控？什么是他的认知死角？矛盾在哪里？
+4. 矛盾日志：同一主题在不同场合说法不一致的实例（最高诊断价值）
+5. 压力下的反应模式：在危机/失败/批评时，他的真实行为是什么？
+
+【证据标准】
+- 只有具体事件和原文引证才算证据
+- 行为（他怎么做的）> 表态（他说什么）
+- 危机时的行为 > 顺境时的演讲
+- 矛盾点 > 一致性表达
+
+【输出结构（Quick Mode）】
+Step 0：先验申报（≤5条既有印象，完成后比对）
+核心发现1：性格类型与能量结构（含引证 + 行为预测）
+核心发现2：核心驱动力与自我认知（含引证 + 弱点分析）
+核心发现3：压力反应与矛盾日志（含具体事件 + 行为预测）
+置信度总览
 """
 
 
@@ -191,7 +205,12 @@ def build_user_message(
 # ── LLM API 调用层 ───────────────────────────────────────────────────────────
 
 
-def call_anthropic(system_prompt: str, user_message: str, model: str) -> str:
+def call_anthropic(
+    system_prompt: str,
+    user_message: str,
+    model: str,
+    max_tokens: int = 8192,
+) -> str:
     """调用 Anthropic API，返回原始响应文本。
 
     API Key 从环境变量 ANTHROPIC_API_KEY 读取。
@@ -199,7 +218,7 @@ def call_anthropic(system_prompt: str, user_message: str, model: str) -> str:
     client = anthropic.Anthropic()
     response = client.messages.create(
         model=model,
-        max_tokens=8192,
+        max_tokens=max_tokens,
         system=system_prompt,
         messages=[{"role": "user", "content": user_message}],
     )
@@ -212,6 +231,7 @@ def call_openai_compatible(
     model: str,
     api_key: str,
     base_url: str | None = None,
+    max_tokens: int = 8192,
 ) -> str:
     """调用 OpenAI 或 OpenAI 兼容 API，返回原始响应文本。
 
@@ -226,7 +246,7 @@ def call_openai_compatible(
     client = openai.OpenAI(api_key=api_key, base_url=base_url)
     response = client.chat.completions.create(
         model=model,
-        max_tokens=8192,
+        max_tokens=max_tokens,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
@@ -246,6 +266,7 @@ def run_analysis(
     model: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
+    max_tokens: int = 8192,
 ) -> tuple[str, str | None]:
     """调用 LLM API 执行分析，返回 (markdown, json_or_none)。
 
@@ -268,6 +289,7 @@ def run_analysis(
             system_prompt=system_prompt,
             user_message=user_message,
             model=effective_model,
+            max_tokens=max_tokens,
         )
     elif provider in ("openai", "compatible"):
         env_key = "OPENAI_API_KEY" if provider == "openai" else "PROFILER_API_KEY"
@@ -278,6 +300,7 @@ def run_analysis(
             model=effective_model,
             api_key=effective_key,
             base_url=base_url,
+            max_tokens=max_tokens,
         )
     else:
         raise ValueError(f"未知 provider: {provider!r}，支持：anthropic / openai / compatible")
@@ -434,6 +457,13 @@ def main() -> None:
         action="store_true",
         help="使用精简版系统提示词（~200 tokens），适配小 context 模型（如 Groq 免费层）",
     )
+    parser.add_argument(
+        "--max-output-tokens",
+        type=int,
+        default=8192,
+        metavar="N",
+        help="模型最大输出 token 数（默认 8192；受限平台如 Groq 免费层建议设为 2000）",
+    )
 
     args = parser.parse_args()
 
@@ -517,6 +547,7 @@ def main() -> None:
         model=args.model,
         api_key=args.api_key,
         base_url=args.base_url,
+        max_tokens=args.max_output_tokens,
     )
 
     write_outputs(
