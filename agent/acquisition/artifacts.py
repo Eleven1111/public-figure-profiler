@@ -56,7 +56,7 @@ class ArtifactStore:
 
     def log_trace(self, entry: dict) -> None:
         with (self.run_dir / "agent_trace.jsonl").open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
 
     def ab_count(self) -> int:
         return sum(1 for a in self.artifacts if a.grade in ("A", "B"))
