@@ -1,7 +1,18 @@
-anthropic>=0.40.0,<2.0.0
+# LLM clients
 openai>=1.0.0,<2.0.0
+
+# Web search + content extraction
+requests>=2.31.0,<3.0.0
+trafilatura>=1.12.0,<3.0.0
+ddgs>=9.0.0
+
+# YouTube
+yt-dlp>=2024.12.0
 youtube-transcript-api>=0.6.0,<2.0.0
+
+# Podcast
+podcastindex>=1.2.0
+
+# Testing
 pytest>=8.0.0,<10.0.0
 pytest-mock>=3.12.0,<4.0.0
-openai-whisper>=20231117
-assemblyai>=0.24.0,<1.0.0
