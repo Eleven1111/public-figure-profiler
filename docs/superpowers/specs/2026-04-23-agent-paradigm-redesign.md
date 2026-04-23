@@ -169,53 +169,54 @@ artifacts/
 
 ## 7. Claude 分析层（Phase 2）
 
-### 7.1 模型与参数
+### 7.1 调用方式：Claude Code CLI 子进程
+
+分析层**不调用 Anthropic SDK**，直接启动 `claude` CLI 子进程执行分析任务。这样复用 Claude Code 已有的认证、会话管理和内部优化，代码更简洁。
+
+**模型：** `claude-sonnet-4-6`
 
 ```python
-client = anthropic.Anthropic()
+import subprocess
+import sys
+from pathlib import Path
 
-with client.messages.stream(
-    model="claude-opus-4-7",
-    max_tokens=16384,
-    thinking={"type": "adaptive"},
-    output_config={"effort": "xhigh"},
-    system=[
-        {   # AGENT.md — 静态，强制 cache
-            "type": "text",
-            "text": agent_md_content,
-            "cache_control": {"type": "ephemeral"}
-        },
-        {   # 框架文档 — 静态，强制 cache
-            "type": "text",
-            "text": framework_docs,
-            "cache_control": {"type": "ephemeral"}
-        },
-        {   # 输出 schema — 静态，强制 cache
-            "type": "text",
-            "text": output_schema,
-            "cache_control": {"type": "ephemeral"}
-        },
-    ],
-    messages=[{"role": "user", "content": user_message}],
-) as stream:
-    for text in stream.text_stream:
-        print(text, end="", flush=True)
-    
-    final = stream.get_final_message()
+def run_analysis_via_claude_code(
+    prompt_text: str,
+    model: str = "claude-sonnet-4-6",
+) -> str:
+    """通过 claude CLI 子进程执行分析，流式打印到终端，返回完整文本。"""
+    result = subprocess.run(
+        ["claude", "--model", model, "--print"],
+        input=prompt_text,
+        text=True,
+        capture_output=False,   # 让 stdout 直接流到终端
+        check=True,
+    )
+    # 捕获模式：若需要返回文本而非实时打印
+    # result = subprocess.run([...], input=prompt_text, capture_output=True, text=True)
+    # return result.stdout
 ```
 
-### 7.2 Prompt Cache 收益
+**调用时的 prompt 结构**（通过 stdin 传入）：
 
-| 内容块 | 约 tokens | 每次调用节省 |
-|--------|-----------|-------------|
-| AGENT.md | ~2,000 | ✓ |
-| 框架文档（4-8个） | ~6,000-10,000 | ✓ |
-| output-schema.md | ~1,000 | ✓ |
-| **合计** | **~9,000-13,000** | **~$0.04-0.07/次** |
+```
+<system>
+{AGENT.md 全文}
 
-Cache TTL = 5 分钟（Anthropic ephemeral）。同一个人的多次 quick/deep 分析会命中缓存。
+# 本次激活的分析框架
+{framework_docs}
 
-### 7.3 AGENT.md 更新
+# 输出格式规范
+{output_schema}
+</system>
+
+<user>
+请对以下公开人物进行心理侧写分析...
+{corpus_content}
+</user>
+```
+
+### 7.2 AGENT.md 更新
 
 当前 AGENT.md 第一行注明"语料由外部工程化管道构建好并注入"，在新范式下改为：
 
@@ -297,7 +298,8 @@ podcastindex>=1.2.0       # Podcast Index API
 httpx>=0.27.0             # 异步 HTTP 客户端
 ```
 
-**Qwen 调用**：沿用现有 `openai` 库（OpenAI-compatible）
+**Qwen 采集**：沿用现有 `openai` 库（OpenAI-compatible）  
+**Claude 分析**：直接调用 `claude` CLI，无需 anthropic SDK（可移除）
 
 ---
 
@@ -305,18 +307,19 @@ httpx>=0.27.0             # 异步 HTTP 客户端
 
 ```bash
 # 现有（保留）
-ANTHROPIC_API_KEY=...
-TAVILY_API_KEY=...
+TAVILY_API_KEY=...           # Web 搜索
 
 # 新增（Qwen acquisition agent）
 DASHSCOPE_API_KEY=sk-sp-289ef966bb4040cdb893e1767811dca5
 DASHSCOPE_BASE_URL=https://coding.dashscope.aliyuncs.com/v1
 
 # 可选
-PODCAST_INDEX_KEY=...       # Podcast Index API（免费申请）
+PODCAST_INDEX_KEY=...        # Podcast Index API（免费申请）
 PODCAST_INDEX_SECRET=...
-YOUTUBE_API_KEY=...         # YouTube Data API v3（非必须，yt-dlp 可替代）
+YOUTUBE_API_KEY=...          # YouTube Data API v3（非必须，yt-dlp 可替代）
 ```
+
+**注：** Claude Code CLI 使用自身的认证（`~/.claude/` 配置），无需 `ANTHROPIC_API_KEY`。
 
 ---
 
