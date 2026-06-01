@@ -1,6 +1,8 @@
 import json
+import os
 from unittest.mock import patch, MagicMock
 from pathlib import Path
+import pytest
 from agent.acquisition.artifacts import ArtifactStore
 from agent.acquisition.loop import AcquisitionLoop
 
@@ -31,7 +33,8 @@ def test_loop_stops_when_no_tool_calls(tmp_path):
     store = ArtifactStore(tmp_path)
     loop = AcquisitionLoop("Test Person", BIO, store)
 
-    with patch("agent.acquisition.loop.openai.OpenAI") as MockClient:
+    with patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test_key"}), \
+         patch("agent.acquisition.loop.openai.OpenAI") as MockClient:
         mock_client = MagicMock()
         MockClient.return_value = mock_client
         mock_client.chat.completions.create.return_value = _make_qwen_response()
@@ -46,7 +49,8 @@ def test_loop_executes_search_web_tool(tmp_path):
 
     search_tc = _make_tool_call("search_web", {"query": "Test Person interview"})
 
-    with patch("agent.acquisition.loop.openai.OpenAI") as MockClient, \
+    with patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test_key"}), \
+         patch("agent.acquisition.loop.openai.OpenAI") as MockClient, \
          patch("agent.acquisition.loop.search_web", return_value=[
              {"url": "https://ex.com", "title": "T", "content": "Test Person said...Test Person is...Test Person thinks...", "published_date": ""}
          ]) as mock_search, \
@@ -69,7 +73,8 @@ def test_loop_skips_low_relevance_content(tmp_path):
 
     search_tc = _make_tool_call("search_web", {"query": "test"})
 
-    with patch("agent.acquisition.loop.openai.OpenAI") as MockClient, \
+    with patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test_key"}), \
+         patch("agent.acquisition.loop.openai.OpenAI") as MockClient, \
          patch("agent.acquisition.loop.search_web", return_value=[
              {"url": "https://noise.com", "title": "Noise", "content": "unrelated content", "published_date": ""}
          ]), \
@@ -85,3 +90,11 @@ def test_loop_skips_low_relevance_content(tmp_path):
         loop.run(max_iterations=5, min_ab=5, min_total=10)
 
     assert store.ab_count() == 0
+
+def test_loop_fails_fast_without_dashscope_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    store = ArtifactStore(tmp_path)
+    loop = AcquisitionLoop("Test Person", BIO, store)
+
+    with pytest.raises(RuntimeError, match="DASHSCOPE_API_KEY"):
+        loop.run(max_iterations=1)

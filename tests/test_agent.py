@@ -14,7 +14,9 @@ from agent.agent import (
     assess_corpus_adequacy,
     load_framework_docs,
     make_slug,
+    resolve_analysis_model,
     resolve_frameworks,
+    selected_analysis_backends,
 )
 
 
@@ -145,3 +147,65 @@ class TestLoadFrameworkDocs:
         assert "CORE" in result
         captured = capsys.readouterr()
         assert "missing" in captured.err.lower()
+
+
+class TestAnalysisBackendSelection:
+    def test_single_backend_selection(self):
+        assert selected_analysis_backends("claude") == ["claude"]
+        assert selected_analysis_backends("codex") == ["codex"]
+
+    def test_both_backend_selection(self):
+        assert selected_analysis_backends("both") == ["claude", "codex"]
+
+    def test_default_claude_model(self):
+        assert resolve_analysis_model("claude", None, None, None) == "claude-sonnet-4-6"
+
+    def test_codex_uses_cli_default_without_model(self):
+        assert resolve_analysis_model("codex", None, None, None) is None
+
+    def test_generic_model_applies_to_single_backend(self):
+        assert resolve_analysis_model("codex", "gpt-test", None, None) == "gpt-test"
+
+    def test_backend_specific_model_wins(self):
+        assert resolve_analysis_model("claude", "generic", "sonnet", None) == "sonnet"
+        assert resolve_analysis_model("codex", "generic", None, "gpt-test") == "gpt-test"
+
+
+class TestSkipAcquisitionRequiresCorpus:
+    """`--skip-acquisition` without `--corpus` (or `--identity`) is a footgun:
+    the run reaches '没有任何可用语料' after Phase 0 and exits. Catch it at
+    arg-parse time so the user gets a fast, clear error instead."""
+
+    def _run_main(self, args, monkeypatch):
+        from agent import agent as agent_mod
+        monkeypatch.setattr(sys, "argv", ["agent.py", *args])
+        return agent_mod.main()
+
+    def test_skip_acquisition_without_corpus_errors(self, monkeypatch, capsys):
+        with pytest.raises(SystemExit) as exc:
+            self._run_main(
+                ["--person", "Sam Altman", "--skip-acquisition"],
+                monkeypatch,
+            )
+        assert exc.value.code == 2
+        captured = capsys.readouterr()
+        assert "--skip-acquisition" in captured.err
+        assert "--corpus" in captured.err
+
+    def test_skip_acquisition_with_corpus_does_not_error_at_parse(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        corpus = tmp_path / "c.txt"
+        corpus.write_text("local content", encoding="utf-8")
+        monkeypatch.setattr(sys, "argv", [
+            "agent.py", "--person", "x",
+            "--skip-acquisition", "--corpus", str(corpus),
+            "--analysis-backend", "claude",
+        ])
+        # We don't want to actually call claude — patch the runner.
+        from unittest.mock import patch as _patch
+        with _patch("agent.agent.run_analysis") as mock_run:
+            mock_run.return_value = ("md", None)
+            from agent import agent as agent_mod
+            agent_mod.main()
+        # If we got here, parse-time validation accepted the combo.

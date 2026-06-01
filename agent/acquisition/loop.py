@@ -151,8 +151,16 @@ class AcquisitionLoop:
         skip_audio: bool = False,
     ) -> list[dict]:
         """Run the Qwen acquisition loop. Returns corpus dicts for analysis."""
+        api_key = os.environ.get("DASHSCOPE_API_KEY", "")
+        if not api_key:
+            raise RuntimeError(
+                "DASHSCOPE_API_KEY is required for the acquisition agent. "
+                "Set it before running automatic acquisition, or use "
+                "--skip-acquisition with one or more --corpus files."
+            )
+
         client = openai.OpenAI(
-            api_key=os.environ.get("DASHSCOPE_API_KEY", ""),
+            api_key=api_key,
             base_url=os.environ.get(
                 "DASHSCOPE_BASE_URL",
                 "https://dashscope.aliyuncs.com/compatible-mode/v1",

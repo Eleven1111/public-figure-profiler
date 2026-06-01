@@ -13,3 +13,7 @@ profiles/
 htmlcov/
 dist/
 build/
+
+# Runtime output / state (not source)
+artifacts/
+.omx/

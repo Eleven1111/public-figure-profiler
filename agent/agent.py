@@ -3,12 +3,12 @@
 
 Phase 0: Qwen 3.5 synthesizes a Bio identity anchor from initial web search.
 Phase 1: Qwen 3.5 drives a tool-calling acquisition loop across 8+ platforms.
-Phase 2: claude CLI (claude-sonnet-4-6) performs the psychological analysis.
+Phase 2: Claude Code and/or Codex CLI performs the psychological analysis.
 
 Usage:
   python -m agent.agent --person "Dario Amodei" --mode deep --purpose "投资尽调"
   python -m agent.agent --person "任正非" --skip-audio --object-type business
-  python -m agent.agent --person "李飞飞" --platforms web,youtube,bilibili
+  python -m agent.agent --person "李飞飞" --analysis-backend codex
   python -m agent.agent --person "Obama" --identity '{"name_variants":["Obama"]}'
 """
 from __future__ import annotations
@@ -26,13 +26,14 @@ from .acquisition.identity import synthesize_bio
 from .acquisition.loop import AcquisitionLoop
 from .acquisition.tools.search import search_web
 from .analysis.prompt import build_prompt
-from .analysis.runner import run_analysis
+from .analysis.runner import DEFAULT_CLAUDE_MODEL, AnalysisBackend, run_analysis
 
 
 ALL_FRAMEWORKS = [
     "core", "big5", "loc", "cit", "lta", "operational-code", "ems", "dark-triad",
 ]
 DEFAULT_FRAMEWORKS = ["core", "big5", "loc", "cit"]
+ANALYSIS_BACKENDS = ("claude", "codex", "both")
 OBJECT_TYPE_PRESETS: dict[str, list[str]] = {
     "business": ["core", "big5", "loc", "cit", "lta"],
     "political": ["core", "big5", "loc", "cit", "lta", "operational-code"],
@@ -84,6 +85,36 @@ def assess_corpus_adequacy(sources: list[dict]) -> str:
     return "insufficient"
 
 
+def selected_analysis_backends(raw: str) -> list[AnalysisBackend]:
+    """Resolve CLI backend selection into concrete backends."""
+    if raw == "both":
+        return ["claude", "codex"]
+    if raw == "claude":
+        return ["claude"]
+    if raw == "codex":
+        return ["codex"]
+    raise ValueError(f"unsupported analysis backend: {raw}")
+
+
+def resolve_analysis_model(
+    backend: AnalysisBackend,
+    generic_model: str | None,
+    claude_model: str | None,
+    codex_model: str | None,
+    multi_backend: bool = False,
+) -> str | None:
+    """Return the model to pass to a backend CLI."""
+    if backend == "claude":
+        return (
+            claude_model
+            or (None if multi_backend else generic_model)
+            or DEFAULT_CLAUDE_MODEL
+        )
+    if backend == "codex":
+        return codex_model or (None if multi_backend else generic_model)
+    raise ValueError(f"unsupported analysis backend: {backend}")
+
+
 def load_framework_docs(frameworks: list[str], base_dir: Path) -> str:
     fw_dir = base_dir / "references" / "frameworks"
     chunks = []
@@ -116,6 +147,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # Acquisition controls
     parser.add_argument("--max-iterations", type=int, default=25)
     parser.add_argument("--min-ab-sources", type=int, default=5)
+    parser.add_argument(
+        "--skip-acquisition",
+        action="store_true",
+        help="跳过 Qwen 采集循环，仅使用 --corpus 提供的本地语料",
+    )
     parser.add_argument("--skip-audio", action="store_true", help="跳过音频下载和转录")
     parser.add_argument(
         "--corpus", action="append", default=[], metavar="FILE",
@@ -123,7 +159,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
 
     # Analysis
-    parser.add_argument("--model", default="claude-sonnet-4-6", help="Claude 模型")
+    parser.add_argument(
+        "--analysis-backend",
+        choices=ANALYSIS_BACKENDS,
+        default="claude",
+        help="分析后端：claude、codex，或 both 分别运行两者",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="单一分析后端的模型名；both 模式请使用 --claude-model/--codex-model",
+    )
+    parser.add_argument("--claude-model", default=None, help="Claude Code 分析模型")
+    parser.add_argument("--codex-model", default=None, help="Codex CLI 分析模型")
     parser.add_argument("--output-dir", default="./profiles")
     parser.add_argument("--artifacts-dir", default="./artifacts")
     return parser
@@ -147,6 +195,15 @@ def main() -> None:
     except ValueError as e:
         parser.error(str(e))
 
+    if args.analysis_backend == "both" and args.model:
+        parser.error("both 模式下请使用 --claude-model 和/或 --codex-model，不要使用 --model")
+
+    if args.skip_acquisition and not args.corpus:
+        parser.error(
+            "--skip-acquisition 必须搭配 --corpus 至少一份本地语料文件 "
+            "（否则没有任何可分析的内容）。例：--skip-acquisition --corpus ./interview.txt"
+        )
+
     print(f"[init] 激活框架: {', '.join(frameworks)}", file=sys.stderr)
 
     slug = make_slug(args.person)
@@ -164,6 +221,15 @@ def main() -> None:
         except Exception as e:
             parser.error(f"--identity 解析失败: {e}")
         print("[phase0] 使用用户提供的 Bio", file=sys.stderr)
+    elif args.skip_acquisition:
+        bio = {
+            "name_variants": [args.person],
+            "occupations": [],
+            "orgs": [],
+            "known_for": [],
+            "disambiguation": f"目标人物：{args.person}",
+        }
+        print("[phase0] 跳过采集，使用最简 Bio", file=sys.stderr)
     else:
         print(f"[phase0] 合成 {args.person} 的 Bio 身份锚点...", file=sys.stderr)
         init_results = search_web(f"{args.person} biography career", num_results=5)
@@ -191,14 +257,22 @@ def main() -> None:
         ))
 
     # ── Phase 1: Qwen acquisition agent loop ─────────────────────────────────
-    print(f"[phase1] 启动采集 agent（max_iterations={args.max_iterations}）...", file=sys.stderr)
-    loop = AcquisitionLoop(args.person, bio, store)
-    corpus_sources = loop.run(
-        max_iterations=args.max_iterations,
-        min_ab=args.min_ab_sources,
-        min_total=10,
-        skip_audio=args.skip_audio,
-    )
+    if args.skip_acquisition:
+        print("[phase1] 跳过采集 agent，仅使用本地语料", file=sys.stderr)
+        corpus_sources = store.to_corpus_dicts()
+    else:
+        print(f"[phase1] 启动采集 agent（max_iterations={args.max_iterations}）...", file=sys.stderr)
+        loop = AcquisitionLoop(args.person, bio, store)
+        try:
+            corpus_sources = loop.run(
+                max_iterations=args.max_iterations,
+                min_ab=args.min_ab_sources,
+                min_total=10,
+                skip_audio=args.skip_audio,
+            )
+        except RuntimeError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(2)
 
     if not corpus_sources:
         print("Error: 没有任何可用语料，终止分析。", file=sys.stderr)
@@ -211,7 +285,7 @@ def main() -> None:
         file=sys.stderr,
     )
 
-    # ── Phase 2: Claude analysis ──────────────────────────────────────────────
+    # ── Phase 2: CLI analysis ────────────────────────────────────────────────
     agent_md = agent_md_path.read_text(encoding="utf-8")
     output_schema = schema_path.read_text(encoding="utf-8")
     framework_docs = load_framework_docs(frameworks, base)
@@ -228,18 +302,32 @@ def main() -> None:
         output_schema=output_schema,
     )
 
-    print(
-        f"[phase2] 调用 claude --model {args.model}（语料 {len(prompt):,} chars）...",
-        file=sys.stderr,
-    )
+    backends = selected_analysis_backends(args.analysis_backend)
+    multi_backend = len(backends) > 1
+    for backend in backends:
+        model = resolve_analysis_model(
+            backend=backend,
+            generic_model=args.model,
+            claude_model=args.claude_model,
+            codex_model=args.codex_model,
+            multi_backend=multi_backend,
+        )
+        model_label = model or "default"
+        print(
+            f"[phase2] 调用 {backend} 分析后端（model={model_label}, "
+            f"语料 {len(prompt):,} chars）...",
+            file=sys.stderr,
+        )
 
-    run_analysis(
-        prompt_text=prompt,
-        model=args.model,
-        output_dir=Path(args.output_dir),
-        slug=slug,
-        date_str=date_str,
-    )
+        run_analysis(
+            prompt_text=prompt,
+            backend=backend,
+            model=model,
+            output_dir=Path(args.output_dir),
+            slug=slug,
+            date_str=date_str,
+            output_suffix=backend if multi_backend else "",
+        )
 
     print(f"✓ Artifacts: {run_dir}/", file=sys.stderr)
 

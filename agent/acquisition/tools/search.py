@@ -39,7 +39,14 @@ def _tavily_search(query: str, num_results: int) -> list[dict]:
 
 
 def _ddg_search(query: str, num_results: int) -> list[dict]:
-    from duckduckgo_search import DDGS
+    try:
+        from ddgs import DDGS
+    except ImportError as exc:
+        raise RuntimeError(
+            "DuckDuckGo fallback requires the ddgs package. "
+            "Run `pip install -r requirements.txt` or set TAVILY_API_KEY."
+        ) from exc
+
     results = []
     try:
         with DDGS() as ddgs:
