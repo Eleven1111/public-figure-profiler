@@ -18,7 +18,7 @@ from .tools.youtube import search_youtube, download_audio
 from .tools.audio import transcribe_audio
 from .tools.podcast import search_podcast
 from .tools.quality import check_relevance, report_status
-from ..corpus.grader import grade_source
+from ..corpus.grader import classify_stance, grade_source
 
 
 TOOL_DEFINITIONS = [
@@ -132,6 +132,9 @@ _TOOL_DISPATCH = {
         "ab_count": ctx["store"].ab_count(),
         "total": len(ctx["store"].artifacts),
         "iteration": ctx["iteration"],
+        "critical_count": sum(
+            1 for a in ctx["store"].artifacts if a.stance == "critical"
+        ),
     }),
 }
 
@@ -291,6 +294,7 @@ class AcquisitionLoop:
             title=title,
             content=content,
             grade=grade_sig.grade,
+            stance=classify_stance(content, title),
             relevance_score=rel.get("score", 0),
             word_count=len(content.split()),
             language="zh" if any("一" <= c <= "鿿" for c in content[:100]) else "en",
@@ -315,8 +319,18 @@ class AcquisitionLoop:
 3. 覆盖（C 级）：微博、Twitter/X、小红书内容
 4. 跨语言：同时搜索中文和英文
 
+**对抗性语料配额（强制）：** 至少采集 2 条批评性/对立方来源——
+做空报告、诉讼/监管文件、离职员工或竞争对手的评价、深度质疑报道。
+搜索词示例：「{self.person} 争议」「{self.person} 质疑 批评」
+「{self.person} lawsuit controversy criticism」。
+本人叙事和友好媒体的语料天然有美化偏差，批评性来源是矛盾分析的关键证据。
+
+**行为事实采集（强制）：** 除言论语料外，至少采集 2 条记录**可核实行为**的来源——
+融资/退出/减持时机、重大人事决策、诉讼结果、捐赠、股权变动、组织调整的新闻报道。
+言行对照是侧写分析的核心证据，只有言论没有行为记录会严重削弱报告可信度。
+
 每采集 4-5 个来源后，调用 report_status 报告进度。
-当 A/B 级来源 ≥ 5 条 且总数 ≥ 10 条时，report_status 会通知停止。
+当 A/B 级来源 ≥ 5 条 且总数 ≥ 10 条且已有批评性来源时，report_status 会通知停止。
 请不要重复搜索已经覆盖的角度，遇到无结果的平台立即换下一个。"""
 
 

@@ -12,6 +12,7 @@ def build_prompt(
     agent_md: str,
     framework_docs: str,
     output_schema: str,
+    markers_block: str = "",
 ) -> str:
     """Assemble system + user content into a single stdin prompt for claude -p."""
     adequacy_notes = {
@@ -44,6 +45,10 @@ def build_prompt(
             meta.append(f"工具: {s['origin']}")
         if s.get("title"):
             meta.append(f"标题: {s['title']}")
+        if s.get("stance") and s["stance"] != "neutral":
+            meta.append(f"立场: {s['stance']}")
+        if s.get("syndication_of"):
+            meta.append(f"同源转载自: {s['syndication_of']}（引证时算同一独立来源）")
         header = f"[{s['source_id']} | " + " | ".join(meta) + "]"
         content = s["content"]
         limit = PER_SOURCE_LIMITS.get(s.get("grade", "D"), 1_000)
@@ -83,6 +88,8 @@ def build_prompt(
         f"{adequacy_notes[adequacy]}\n\n"
         f"**已收集语料（共 {len(corpus_sources)} 篇，已预分配 source_id）：**\n\n"
         f"{corpus_text if corpus_sources else '（无语料，无法分析）'}\n\n"
+        + (f"{markers_block}\n\n" if markers_block else "")
+        +
         "请严格按照 AGENT.md 中的 Step 0 → Step 7 流程执行。\n\n"
         "**输出结构（强制，不可省略或合并）：**\n"
         "1. **先输出完整 Markdown 叙事报告** — 严格遵循 output-schema.md 中的「Markdown 报告模板（Deep Mode）」，"

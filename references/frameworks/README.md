@@ -21,17 +21,20 @@
 | [ems.md](ems.md) | Jeffrey Young | 早期适应不良图式：18 种持久认知情绪模式 | 可选 | 4（谨慎） |
 | [lta.md](lta.md) | Margaret Hermann | 领导特质分析：7 特质 | 商业/政治领导人默认 | 3 |
 | [operational-code.md](operational-code.md) | Alexander George | 代码操作：10 问信念系统 | 政治/外交对象默认 | 2 |
+| [motives.md](motives.md) | McClelland / Winter | 三动机：驱动他的是成就、控制还是归属？ | ✓ | 3 |
+| [values-hierarchy.md](values-hierarchy.md) | Schwartz 十价值环 | 价值层级：取舍时刻暴露的真实排序 | ✓ | 2（取舍时刻） |
+| [interests.md](interests.md) | 自建（相关方 + 显示性偏好 + 激励） | 利益结构：此刻什么对他有利？ | 商业/政治默认 | 言+行各 1 |
 | [dark-triad.md](dark-triad.md) | Paulhus & Williams | 自恋/马基雅维利/精神病态倾向 | 默认关（伦理敏感） | 5（极谨慎） |
 
 ## 对象类型 → 默认框架组合
 
 | 对象类型 | 默认框架 |
 |----------|---------|
-| 企业家 / 商业领导人 | core + big5 + loc + cit + lta |
-| 政治家 / 国家领导人 | core + big5 + loc + cit + lta + operational-code |
-| 学者 / 思想家 | core + big5 + loc + cit |
-| 艺术家 / 文化人物 | core + big5 + loc + cit + ems（创伤经历公开时） |
-| 通用 / 未分类 | core + big5 + loc + cit |
+| 企业家 / 商业领导人 | core + big5 + loc + cit + lta + motives + values-hierarchy + interests |
+| 政治家 / 国家领导人 | core + big5 + loc + cit + lta + operational-code + motives + values-hierarchy + interests |
+| 学者 / 思想家 | core + big5 + loc + cit + motives + values-hierarchy |
+| 艺术家 / 文化人物 | core + big5 + loc + cit + motives + values-hierarchy |
+| 通用 / 未分类 | core + big5 + loc + cit + motives + values-hierarchy |
 
 CLI 示例：
 ```bash
