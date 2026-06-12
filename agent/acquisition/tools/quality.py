@@ -74,8 +74,17 @@ def report_status(state: dict) -> dict:
     ab = state.get("ab_count", 0)
     total = state.get("total", 0)
     iteration = state.get("iteration", 0)
+    critical = state.get("critical_count")
 
     if ab >= 5 and total >= 10:
+        # 对抗性配额：数量达标但还没有批评性来源时，给采集 agent 留窗口去补；
+        # 迭代过半仍找不到（可能确实不存在）则放行，避免死锁。
+        if critical is not None and critical < 1 and iteration < 12:
+            return {
+                **state,
+                "should_stop": False,
+                "reason": "missing_critical_sources",
+            }
         return {**state, "should_stop": True, "reason": "sufficient"}
     if iteration >= 25:
         return {**state, "should_stop": True, "reason": "max_iterations"}

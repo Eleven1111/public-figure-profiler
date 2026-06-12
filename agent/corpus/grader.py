@@ -63,6 +63,40 @@ class GradeSignal:
     reason: str
 
 
+# ── 立场分类（对抗性语料识别）──────────────────────────────────────────────
+
+_CRITICAL_MARKERS = [
+    # 中文
+    "做空", "起诉", "诉讼", "指控", "质疑", "争议", "丑闻", "调查报告",
+    "维权", "举报", "处罚", "罚款", "监管约谈", "离职员工", "批评",
+    "翻车", "塌房", "造假", "欺诈", "失信",
+    # 英文
+    "lawsuit", "sued", "fraud", "scandal", "controversy", "criticism",
+    "critics", "whistleblower", "short seller", "short-seller", "sec filing",
+    "investigation", "allegation", "accused", "fined", "settlement",
+]
+
+_FIRSTPERSON_MARKERS = [
+    "我认为", "我觉得", "我们的", "我说", "采访", "访谈", "对话",
+    "transcript", "interview", "q&a", "shareholder letter", "股东信", "公开信",
+]
+
+
+def classify_stance(content: str, title: str = "") -> str:
+    """启发式立场分类：critical / first_person / neutral。
+
+    critical 来源是言行对照和矛盾分析的关键证据，
+    采集配额要求每次至少 2 条（见 acquisition loop system prompt）。
+    """
+    text = (title + " " + content[:3000]).lower()
+    critical_hits = sum(1 for m in _CRITICAL_MARKERS if m in text)
+    if critical_hits >= 2:
+        return "critical"
+    if any(m in text for m in _FIRSTPERSON_MARKERS):
+        return "first_person"
+    return "neutral"
+
+
 def _heuristic_grade(url: str, content: str, title: str = "") -> GradeSignal:
     """基于域名、URL 路径和内容长度的规则评级。"""
     u = (url or "").lower()

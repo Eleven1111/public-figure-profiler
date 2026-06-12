@@ -20,6 +20,7 @@ class Artifact:
     word_count: int
     language: str
     published_date: str
+    stance: str = "neutral"  # critical / first_person / neutral
     sha256: str = field(default="")
     fetched_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
@@ -79,6 +80,7 @@ class ArtifactStore:
                 "origin": a.tool,
                 "word_count": a.word_count,
                 "language": a.language,
+                "stance": a.stance,
             })
         return result
 

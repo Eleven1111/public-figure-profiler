@@ -25,20 +25,32 @@ from .acquisition.artifacts import ArtifactStore, Artifact
 from .acquisition.identity import synthesize_bio
 from .acquisition.loop import AcquisitionLoop
 from .acquisition.tools.search import search_web
+from .analysis.markers import markers_summary
 from .analysis.prompt import build_prompt
 from .analysis.runner import DEFAULT_CLAUDE_MODEL, AnalysisBackend, run_analysis
+from .analysis.verify import verify_report
+from .corpus.dedupe import independent_ab_count, mark_syndication
+from .dossier import update_dossier
 
 
 ALL_FRAMEWORKS = [
-    "core", "big5", "loc", "cit", "lta", "operational-code", "ems", "dark-triad",
+    "core", "big5", "loc", "cit", "lta", "operational-code",
+    "motives", "values-hierarchy", "interests",
+    "ems", "dark-triad",
 ]
-DEFAULT_FRAMEWORKS = ["core", "big5", "loc", "cit"]
+DEFAULT_FRAMEWORKS = ["core", "big5", "loc", "cit", "motives", "values-hierarchy"]
 ANALYSIS_BACKENDS = ("claude", "codex", "both")
 OBJECT_TYPE_PRESETS: dict[str, list[str]] = {
-    "business": ["core", "big5", "loc", "cit", "lta"],
-    "political": ["core", "big5", "loc", "cit", "lta", "operational-code"],
-    "scholar": ["core", "big5", "loc", "cit"],
-    "artist": ["core", "big5", "loc", "cit"],
+    "business": [
+        "core", "big5", "loc", "cit", "lta",
+        "motives", "values-hierarchy", "interests",
+    ],
+    "political": [
+        "core", "big5", "loc", "cit", "lta", "operational-code",
+        "motives", "values-hierarchy", "interests",
+    ],
+    "scholar": DEFAULT_FRAMEWORKS,
+    "artist": DEFAULT_FRAMEWORKS,
     "general": DEFAULT_FRAMEWORKS,
 }
 
@@ -77,7 +89,9 @@ def make_slug(name: str) -> str:
 
 
 def assess_corpus_adequacy(sources: list[dict]) -> str:
-    ab_count = sum(1 for s in sources if s.get("grade") in ("A", "B"))
+    """充分性按独立来源数判定：转载/同源分发只算 1 个独立来源。"""
+    mark_syndication(sources)
+    ab_count = independent_ab_count(sources)
     if ab_count >= 3:
         return "sufficient"
     if ab_count >= 1:
@@ -280,8 +294,11 @@ def main() -> None:
 
     adequacy = assess_corpus_adequacy(corpus_sources)
     ab_count = sum(1 for s in corpus_sources if s.get("grade") in ("A", "B"))
+    ind_ab = independent_ab_count(corpus_sources)
+    syndicated = sum(1 for s in corpus_sources if s.get("syndication_of"))
     print(
-        f"[corpus] 充分性: {adequacy} (A/B={ab_count}, 总={len(corpus_sources)})",
+        f"[corpus] 充分性: {adequacy} (独立A/B={ind_ab}, 原始A/B={ab_count}, "
+        f"转载/同源={syndicated}, 总={len(corpus_sources)})",
         file=sys.stderr,
     )
 
@@ -289,6 +306,8 @@ def main() -> None:
     agent_md = agent_md_path.read_text(encoding="utf-8")
     output_schema = schema_path.read_text(encoding="utf-8")
     framework_docs = load_framework_docs(frameworks, base)
+
+    markers_block = markers_summary(corpus_sources)
 
     prompt = build_prompt(
         person=args.person,
@@ -300,6 +319,7 @@ def main() -> None:
         agent_md=agent_md,
         framework_docs=framework_docs,
         output_schema=output_schema,
+        markers_block=markers_block,
     )
 
     backends = selected_analysis_backends(args.analysis_backend)
@@ -319,15 +339,44 @@ def main() -> None:
             file=sys.stderr,
         )
 
-        run_analysis(
+        suffix = backend if multi_backend else ""
+        markdown, json_data = run_analysis(
             prompt_text=prompt,
             backend=backend,
             model=model,
             output_dir=Path(args.output_dir),
             slug=slug,
             date_str=date_str,
-            output_suffix=backend if multi_backend else "",
+            output_suffix=suffix,
         )
+
+        # ── Phase 2.5: 引文真实性校验 ────────────────────────────────────────
+        verification = verify_report(markdown, corpus_sources)
+        suffix_part = f"_{suffix}" if suffix else ""
+        verify_path = (
+            Path(args.output_dir) / f"{slug}_{date_str}{suffix_part}.verification.md"
+        )
+        verify_path.write_text(verification.to_markdown(), encoding="utf-8")
+        print(
+            f"[verify] 引证 {verification.total} 条，通过率 {verification.pass_rate:.1%} "
+            f"(未验证 {verification.count('unverified')}, "
+            f"来源不存在 {verification.count('unknown_source')}) → {verify_path}",
+            file=sys.stderr,
+        )
+
+        # ── Phase 3: 人物档案库沉淀 ──────────────────────────────────────────
+        if json_data:
+            try:
+                dossier_dir = update_dossier(
+                    person=args.person,
+                    slug=slug,
+                    report_json=json.loads(json_data),
+                    date_str=date_str,
+                    backend_suffix=suffix,
+                )
+                print(f"[dossier] 档案已更新: {dossier_dir}/", file=sys.stderr)
+            except Exception as exc:
+                print(f"[dossier] 档案更新失败（不影响报告）: {exc}", file=sys.stderr)
 
     print(f"✓ Artifacts: {run_dir}/", file=sys.stderr)
 

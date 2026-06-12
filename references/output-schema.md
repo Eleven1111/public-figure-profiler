@@ -46,14 +46,32 @@
 
 ---
 
-## 矛盾日志
+## 言行三角验证
 
-> 矛盾点是最高诊断价值的信号，优先列出。
+| 言语结论 | 言语证据 | 行为记录 | 判定 |
+|---------|---------|---------|------|
+| [结论] | 「…」[S02] | [可核实行为][S07] | 言行一致 / 言行背离 / 无行为数据 |
+
+> 言行背离条目已转入矛盾日志。若语料无行为类证据，在此声明并在研究局限性中重申。
+
+---
+
+## 矛盾日志（ACH 竞争性假设矩阵）
+
+> 矛盾点是最高诊断价值的信号，优先列出。每个矛盾点必须输出 ACH 矩阵。
 
 ### 矛盾 1：[主题]
 - **场合 A**（[年份]，面向[受众]）：「[原文引证]」[S03]
 - **场合 B**（[年份]，面向[受众]）：「[原文引证]」[S08]
-- **可能解释：** 情境策略 / 真实转变 / 自我矛盾
+
+**ACH 矩阵**（+ 一致 / − 不一致 / 0 无关）：
+
+| 证据 | H1 情境策略 | H2 真实转变 | H3 自我矛盾 | H4 利益驱动 |
+|------|------------|------------|------------|------------|
+| 「…」[S03] | + | − | 0 | + |
+| [行为记录][S07] | 0 | − | 0 | + |
+
+- **判定：** [被否证最少的假设]；次优假设：[…]；判别所需缺失证据：[…]
 - **置信度：** 高/中/低
 
 ---
@@ -98,13 +116,42 @@
 
 （按 operational-code.md 模板）
 
-### §10 早期适应不良图式倾向（ems，按激活框架）
+### §10 三动机分析（motives，按激活框架）
+
+（按 motives.md 模板）
+
+### §11 价值观层级（values-hierarchy，按激活框架）
+
+（按 values-hierarchy.md 模板：宣称性 vs 显示性排序 + 取舍时刻）
+
+### §12 利益结构图谱（interests，按激活框架）
+
+（按 interests.md 模板：相关方图谱 + 资产脆弱度 + 激励拐点）
+
+### §13 早期适应不良图式倾向（ems，按激活框架）
 
 （按 ems.md 模板）
 
-### §11 暗黑三联征倾向（dark-triad，按激活框架）
+### §14 暗黑三联征倾向（dark-triad，按激活框架）
 
 （按 dark-triad.md 模板，需通过伦理门槛）
+
+---
+
+## 综合心智模型（Deep Mode 强制）
+
+> 全部框架结论的一页式整合——"此人的决策函数"。
+
+- **核心驱动：** [主导动机 + 组合类型]
+- **价值排序（显示性前 3）：** 1. … 2. … 3. …
+- **利益约束：** 最脆弱资产 [...]；最近激励拐点 [...]
+- **认知风格：** [不确定性处理 + 矛盾信息处理方式]
+- **决策函数：** 当 [输入] 出现时，此人先 [认知操作]，按 [价值排序] 取舍，在 [利益约束] 内选择 [典型行为]。
+- **跨框架冲突：** [冲突项及证据更支持哪边；无则注明]
+- **三条最高置信预测：**
+  1. [情境 + 可观察行为 + 时限]（置信度：高，依据框架：…）
+  2. …
+  3. …
 
 ---
 
@@ -213,7 +260,26 @@
         "content": "string",
         "source_id": "S08"
       },
-      "interpretation": "situational_strategy | genuine_shift | self_contradiction"
+      "ach_matrix": [
+        {
+          "evidence": "string（证据描述 + source_id）",
+          "h1_situational": "+|-|0",
+          "h2_genuine_shift": "+|-|0",
+          "h3_self_contradiction": "+|-|0",
+          "h4_interest_driven": "+|-|0"
+        }
+      ],
+      "interpretation": "situational_strategy | genuine_shift | self_contradiction | interest_driven",
+      "runner_up": "string — 次优假设",
+      "missing_evidence": "string — 判别所需缺失证据"
+    }
+  ],
+  "word_deed_checks": [
+    {
+      "claim": "string — 言语结论",
+      "speech_source_ids": ["S02"],
+      "action_source_ids": ["S07"],
+      "verdict": "consistent | divergent | no_action_data"
     }
   ],
   "frameworks": {
@@ -291,6 +357,58 @@
       "source_ids": ["..."],
       "confidence": "..."
     },
+    "motives": {
+      "n_achievement": "high|medium|low",
+      "n_power": "high|medium|low",
+      "n_affiliation": "high|medium|low",
+      "dominant": "nAch|nPow|nAff",
+      "combination_type": "string — 见 motives.md 组合表",
+      "motive_conflict_case": "string — 动机冲突实例",
+      "lta_npow_consistency": "consistent|inconsistent|n/a",
+      "findings": "string",
+      "source_ids": ["..."],
+      "confidence": "high|medium|low"
+    },
+    "values_hierarchy": {
+      "stated_ranking": ["string — Schwartz 价值名"],
+      "revealed_ranking": ["string"],
+      "tradeoff_moments": [
+        {
+          "event": "string",
+          "values_in_conflict": ["string", "string"],
+          "actual_choice": "string",
+          "source_ids": ["..."]
+        }
+      ],
+      "stated_vs_revealed_gaps": ["string"],
+      "core_values": ["string"],
+      "confidence": "high|medium|low"
+    },
+    "interests": {
+      "stakeholders": [
+        {
+          "party": "string",
+          "they_depend_on": "string",
+          "subject_depends_on": "string",
+          "leverage": "strong|even|weak",
+          "temperature": "close|functional|tense"
+        }
+      ],
+      "asset_vulnerability_ranking": ["string — 最脆弱在前"],
+      "stated_vs_revealed_preferences": [
+        {
+          "topic": "string",
+          "stated": "string",
+          "actual_flow": "string",
+          "consistent": "true|false"
+        }
+      ],
+      "incentive_inflection_points": [
+        { "window": "string", "change": "string", "predicted_shift": "string" }
+      ],
+      "source_ids": ["..."],
+      "confidence": "high|medium|low"
+    },
     "ems": {
       "observed_schemas": [
         {
@@ -314,6 +432,24 @@
       "source_ids": ["..."],
       "ethical_note": "string"
     }
+  },
+  "synthesis": {
+    "core_drive": "string — 主导动机 + 组合类型",
+    "value_ranking_top3": ["string"],
+    "interest_constraints": "string — 最脆弱资产 + 最近激励拐点",
+    "cognitive_style": "string",
+    "decision_function": "string — 一句话决策函数",
+    "cross_framework_conflicts": ["string"],
+    "top_predictions": [
+      {
+        "id": "P01",
+        "scenario": "string — 具体情境",
+        "behavior": "string — 可观察行为",
+        "horizon": "string — 时间范围，如 12个月内",
+        "confidence": "high|medium|low",
+        "based_on": ["motives", "interests"]
+      }
+    ]
   },
   "priors_validation": {
     "confirmed": ["string"],

@@ -57,6 +57,58 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     return len(inter) / len(union) if union else 0.0
 
 
+def mark_syndication(
+    sources: list[dict],
+    jaccard_threshold: float = 0.45,
+) -> list[dict]:
+    """同源传播检测：转载/编译/同一采访的多平台分发归入同一 independent_id。
+
+    与 dedupe_sources 不同，本函数不删除任何来源，只写回两个字段：
+      independent_id — 独立来源组编号（如 I01）；同组来源在充分性判定中只算 1 个
+      syndication_of — 若为转载，指向组内第一个出现的 source_id；原创为空
+
+    阈值低于去重阈值（0.45 vs 0.75）：转载常有删改、编译、加按语，
+    相似度达不到"重复"标准但仍是同一信息源。
+    """
+    counter = 0
+    groups: list[tuple[set[str], str, str]] = []  # (shingles, independent_id, first_sid)
+    for s in sources:
+        content = s.get("content", "")
+        current = _shingles(content) if content and len(content) >= 500 else set()
+
+        matched = None
+        if current:
+            for existing, ind_id, first_sid in groups:
+                if _jaccard(current, existing) >= jaccard_threshold:
+                    matched = (ind_id, first_sid)
+                    break
+
+        if matched:
+            s["independent_id"] = matched[0]
+            s["syndication_of"] = matched[1]
+        else:
+            counter += 1
+            ind_id = f"I{counter:02d}"
+            s["independent_id"] = ind_id
+            s["syndication_of"] = ""
+            if current:
+                groups.append((current, ind_id, s.get("source_id", "")))
+            else:
+                groups.append((set(), ind_id, s.get("source_id", "")))
+    return sources
+
+
+def independent_ab_count(sources: list[dict]) -> int:
+    """独立 A/B 级来源数：同一 independent_id 组内只取最高等级计 1 次。"""
+    best: dict[str, str] = {}
+    for s in sources:
+        ind = s.get("independent_id") or s.get("source_id", "")
+        grade = s.get("grade", "D")
+        if ind not in best or "ABCD".index(grade) < "ABCD".index(best[ind]):
+            best[ind] = grade
+    return sum(1 for g in best.values() if g in ("A", "B"))
+
+
 def dedupe_sources(
     sources: list[dict],
     jaccard_threshold: float = 0.75,
