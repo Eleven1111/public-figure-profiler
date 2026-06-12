@@ -33,13 +33,13 @@ JSON 格式（所有字段必填，若无信息填空列表/空字符串）：
 
     try:
         client = openai.OpenAI(
-            api_key=os.environ["DASHSCOPE_API_KEY"],
+            api_key=os.environ["DEEPSEEK_API_KEY"],
             base_url=os.environ.get(
-                "DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
+                "DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"
             ),
         )
         response = client.chat.completions.create(
-            model=os.environ.get("DASHSCOPE_MODEL", "qwen3.5-plus"),
+            model=os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash"),
             messages=[
                 {"role": "system", "content": "你是信息提取专家，只返回 JSON，不加额外解释。"},
                 {"role": "user", "content": prompt},
