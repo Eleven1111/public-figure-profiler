@@ -33,7 +33,7 @@ def test_loop_stops_when_no_tool_calls(tmp_path):
     store = ArtifactStore(tmp_path)
     loop = AcquisitionLoop("Test Person", BIO, store)
 
-    with patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test_key"}), \
+    with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test_key"}), \
          patch("agent.acquisition.loop.openai.OpenAI") as MockClient:
         mock_client = MagicMock()
         MockClient.return_value = mock_client
@@ -49,7 +49,7 @@ def test_loop_executes_search_web_tool(tmp_path):
 
     search_tc = _make_tool_call("search_web", {"query": "Test Person interview"})
 
-    with patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test_key"}), \
+    with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test_key"}), \
          patch("agent.acquisition.loop.openai.OpenAI") as MockClient, \
          patch("agent.acquisition.loop.search_web", return_value=[
              {"url": "https://ex.com", "title": "T", "content": "Test Person said...Test Person is...Test Person thinks...", "published_date": ""}
@@ -73,7 +73,7 @@ def test_loop_skips_low_relevance_content(tmp_path):
 
     search_tc = _make_tool_call("search_web", {"query": "test"})
 
-    with patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test_key"}), \
+    with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test_key"}), \
          patch("agent.acquisition.loop.openai.OpenAI") as MockClient, \
          patch("agent.acquisition.loop.search_web", return_value=[
              {"url": "https://noise.com", "title": "Noise", "content": "unrelated content", "published_date": ""}
@@ -92,9 +92,9 @@ def test_loop_skips_low_relevance_content(tmp_path):
     assert store.ab_count() == 0
 
 def test_loop_fails_fast_without_dashscope_key(tmp_path, monkeypatch):
-    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     store = ArtifactStore(tmp_path)
     loop = AcquisitionLoop("Test Person", BIO, store)
 
-    with pytest.raises(RuntimeError, match="DASHSCOPE_API_KEY"):
+    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
         loop.run(max_iterations=1)

@@ -15,7 +15,7 @@ def _mock_qwen(score):
     return mock
 
 def test_check_relevance_returns_score(monkeypatch):
-    with patch("agent.acquisition.tools.quality.os.environ", {"DASHSCOPE_API_KEY": "test_key"}):
+    with patch("agent.acquisition.tools.quality.os.environ", {"DEEPSEEK_API_KEY": "test_key"}):
         with patch("agent.acquisition.tools.quality.openai.OpenAI") as MockClient:
             mock_client = MagicMock()
             MockClient.return_value = mock_client

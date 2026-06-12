@@ -55,16 +55,32 @@ def _dump_json(path: Path, data) -> None:
 # ── claims 提取与合并 ──────────────────────────────────────────────────────────
 
 
+_FRAMEWORK_KEYS = {
+    "core_profile", "big5", "loc", "cit", "lta",
+    "motives", "values_hierarchy", "interests", "dark_triad",
+}
+
+
 def extract_claims(report_json: dict) -> list[dict]:
-    """从报告 JSON 抽取结论条目：每个框架一条 + synthesis 关键字段。"""
+    """从报告 JSON 抽取结论条目：每个框架一条 + 心智模型关键字段。
+
+    兼容两种 schema：
+    - 旧版：report_json["frameworks"][fw_name]
+    - 新版：report_json[fw_name]（框架平铺在顶层）
+    """
     claims: list[dict] = []
-    frameworks = report_json.get("frameworks") or {}
+
+    # 兼容旧版嵌套 + 新版平铺
+    frameworks: dict = report_json.get("frameworks") or {}
+    for key in _FRAMEWORK_KEYS:
+        if key not in frameworks and isinstance(report_json.get(key), dict):
+            frameworks[key] = report_json[key]
+
     for fw_name, fw in frameworks.items():
         if not isinstance(fw, dict):
             continue
         findings = fw.get("findings") or fw.get("decision_function") or ""
         if not findings:
-            # 无 findings 字段的框架（如 core/cit）：序列化关键内容做摘要
             findings = json.dumps(
                 {k: v for k, v in fw.items() if k not in ("source_ids",)},
                 ensure_ascii=False,
@@ -76,24 +92,28 @@ def extract_claims(report_json: dict) -> list[dict]:
             "source_ids": fw.get("source_ids", []),
         })
 
-    synthesis = report_json.get("synthesis") or {}
+    # 心智模型：支持 synthesis（旧）和 integrated_mental_model（新）
+    mental = report_json.get("integrated_mental_model") or report_json.get("synthesis") or {}
     for key in ("core_drive", "decision_function", "interest_constraints"):
-        if synthesis.get(key):
+        if mental.get(key):
             claims.append({
                 "key": f"synthesis:{key}",
-                "claim": str(synthesis[key]),
+                "claim": str(mental[key]),
                 "confidence": report_json.get("overall_confidence", "medium"),
                 "source_ids": [],
             })
 
-    for c in report_json.get("contradictions") or []:
-        topic = c.get("topic", "")
+    # 矛盾/ACH：支持 ach_matrices（新）和 contradictions（旧）
+    for c in report_json.get("ach_matrices") or report_json.get("contradictions") or []:
+        topic = c.get("tension") or c.get("topic", "")
         if topic:
+            selected = next((h for h in c.get("hypotheses", []) if h.get("selected")), None)
+            claim = selected.get("label", "") if selected else c.get("interpretation", "")
             claims.append({
-                "key": f"contradiction:{topic}",
-                "claim": c.get("interpretation", ""),
+                "key": f"contradiction:{topic[:60]}",
+                "claim": claim,
                 "confidence": "medium",
-                "source_ids": [],
+                "source_ids": c.get("source_ids", []),
             })
     return claims
 
@@ -161,6 +181,23 @@ def merge_claims(
 
 
 def extract_predictions(report_json: dict) -> list[dict]:
+    # 新版：顶层 falsifiable_predictions，字段为 trigger/predicted_behavior/time_horizon
+    raw = report_json.get("falsifiable_predictions")
+    if raw:
+        normalized = []
+        for p in raw:
+            if not isinstance(p, dict):
+                continue
+            normalized.append({
+                "scenario": p.get("trigger") or p.get("scenario", ""),
+                "behavior": p.get("predicted_behavior") or p.get("behavior", ""),
+                "horizon": p.get("time_horizon") or p.get("horizon", ""),
+                "confidence": p.get("confidence", "medium"),
+                "based_on": p.get("source_ids") or p.get("based_on", []),
+                "falsification_condition": p.get("falsification_condition", ""),
+            })
+        return normalized
+    # 旧版：synthesis.top_predictions
     synthesis = report_json.get("synthesis") or {}
     return [p for p in synthesis.get("top_predictions") or [] if isinstance(p, dict)]
 

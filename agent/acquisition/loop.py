@@ -154,10 +154,10 @@ class AcquisitionLoop:
         skip_audio: bool = False,
     ) -> list[dict]:
         """Run the Qwen acquisition loop. Returns corpus dicts for analysis."""
-        api_key = os.environ.get("DASHSCOPE_API_KEY", "")
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         if not api_key:
             raise RuntimeError(
-                "DASHSCOPE_API_KEY is required for the acquisition agent. "
+                "DEEPSEEK_API_KEY is required for the acquisition agent. "
                 "Set it before running automatic acquisition, or use "
                 "--skip-acquisition with one or more --corpus files."
             )
@@ -165,8 +165,8 @@ class AcquisitionLoop:
         client = openai.OpenAI(
             api_key=api_key,
             base_url=os.environ.get(
-                "DASHSCOPE_BASE_URL",
-                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "DEEPSEEK_BASE_URL",
+                "https://api.deepseek.com/v1",
             ),
         )
 
@@ -180,7 +180,7 @@ class AcquisitionLoop:
 
         while self.iteration < max_iterations:
             response = client.chat.completions.create(
-                model=os.environ.get("DASHSCOPE_MODEL", "qwen3.5-plus"),
+                model=os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash"),
                 messages=messages,
                 tools=TOOL_DEFINITIONS,
                 tool_choice="auto",
