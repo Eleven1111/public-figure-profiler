@@ -94,6 +94,7 @@ def test_new_frameworks_registered():
         "motives", "values-hierarchy", "interests",
     ]
     business = resolve_frameworks(None, "business")
-    assert "interests" in business and "motives" in business
+    assert "interests" in business and "motives" in business and "depth" in business
     all_fw = resolve_frameworks("all", None)
-    assert "values-hierarchy" in all_fw and "dark-triad" not in all_fw
+    assert "values-hierarchy" in all_fw and "depth" in all_fw and "dark-triad" not in all_fw
+    assert "depth" in resolve_frameworks(None, None)

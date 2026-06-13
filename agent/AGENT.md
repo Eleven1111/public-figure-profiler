@@ -22,6 +22,7 @@
 | Step 6 反例搜索 | 跳过 | ✓ |
 | Step 6.5 综合心智模型 | 跳过 | ✓ |
 | Step 7 报告 + 参考文献 | Quick 模板 + 参考文献 | Deep 模板 + JSON + 参考文献 |
+| Step 7.5 特稿版 | 跳过 | ✓（叙事化第二输出） |
 
 ---
 
@@ -132,6 +133,7 @@
 | motives | `references/frameworks/motives.md` |
 | values-hierarchy | `references/frameworks/values-hierarchy.md` |
 | interests | `references/frameworks/interests.md` |
+| depth | `references/frameworks/depth.md`（必须最后执行，输入为其他框架的输出） |
 | ems | `references/frameworks/ems.md`（伦理高门槛） |
 | dark-triad | `references/frameworks/dark-triad.md`（伦理极高门槛） |
 
@@ -213,6 +215,19 @@
 
 每条预测附置信度（高/中/低）。这些预测会进入人物档案的预测台账（predictions.jsonl），
 未来用实际结果回头校准——写预测时假设它一定会被验证。
+
+---
+
+## Step 7.5：特稿版（仅 Deep Mode）
+
+技术版完成后，按 `references/narrative-template.md` 产出叙事化第二输出，
+文件名 `<人物>_<日期>.特稿.md`。
+
+核心规则：
+- 特稿是技术版的**翻译**，不是另一次分析——两版结论必须一致
+- 场景开篇（取自言行三角分歧条目）→ 行为弧线 → 深层动力揭示（depth 框架做第二落点）
+- 术语全部降维成行为语言；预测台账条目必须入文并写明证伪条件
+- 禁止虚构细节、禁止引用未通过校验的引语、推测级结论必须带限定词
 
 ---
 

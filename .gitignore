@@ -16,4 +16,5 @@ build/
 
 # Runtime output / state (not source)
 artifacts/
+dossiers/
 .omx/

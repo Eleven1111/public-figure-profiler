@@ -24,17 +24,18 @@
 | [motives.md](motives.md) | McClelland / Winter | 三动机：驱动他的是成就、控制还是归属？ | ✓ | 3 |
 | [values-hierarchy.md](values-hierarchy.md) | Schwartz 十价值环 | 价值层级：取舍时刻暴露的真实排序 | ✓ | 2（取舍时刻） |
 | [interests.md](interests.md) | 自建（相关方 + 显示性偏好 + 激励） | 利益结构：此刻什么对他有利？ | 商业/政治默认 | 言+行各 1 |
+| [depth.md](depth.md) | 心理动力学（去临床化） | 深层动力：身份支柱/核心恐惧/核心冲突——他为什么长成这样？ | ✓（最后执行） | 见框架内分维度门槛 |
 | [dark-triad.md](dark-triad.md) | Paulhus & Williams | 自恋/马基雅维利/精神病态倾向 | 默认关（伦理敏感） | 5（极谨慎） |
 
 ## 对象类型 → 默认框架组合
 
 | 对象类型 | 默认框架 |
 |----------|---------|
-| 企业家 / 商业领导人 | core + big5 + loc + cit + lta + motives + values-hierarchy + interests |
-| 政治家 / 国家领导人 | core + big5 + loc + cit + lta + operational-code + motives + values-hierarchy + interests |
-| 学者 / 思想家 | core + big5 + loc + cit + motives + values-hierarchy |
-| 艺术家 / 文化人物 | core + big5 + loc + cit + motives + values-hierarchy |
-| 通用 / 未分类 | core + big5 + loc + cit + motives + values-hierarchy |
+| 企业家 / 商业领导人 | core + big5 + loc + cit + lta + motives + values-hierarchy + interests + depth |
+| 政治家 / 国家领导人 | core + big5 + loc + cit + lta + operational-code + motives + values-hierarchy + interests + depth |
+| 学者 / 思想家 | core + big5 + loc + cit + motives + values-hierarchy + depth |
+| 艺术家 / 文化人物 | core + big5 + loc + cit + motives + values-hierarchy + depth |
+| 通用 / 未分类 | core + big5 + loc + cit + motives + values-hierarchy + depth |
 
 CLI 示例：
 ```bash
