@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -64,13 +65,25 @@ def run_analysis(
     return markdown, json_data
 
 
+# 报告（完整 Markdown 叙事 + 结构化 JSON）体量较大，单次输出可能超过
+# Claude Code 默认 32000 output tokens 上限。提高到 64000，避免长报告被截断。
+_MAX_OUTPUT_TOKENS = "64000"
+
+
 def _run_claude(prompt_text: str, model: str) -> str:
-    """Run Claude Code in non-interactive print mode."""
+    """Run Claude Code in non-interactive print mode.
+
+    使用 ``--output-format json`` 而非默认的 text 流式输出：text 模式在输出体量
+    很大（约 >30KB）时会丢失开头、只保留尾部（一个捕获层面的缺陷）。JSON 信封把
+    完整结果作为单个字段一次性返回，可绕开该问题，并额外提供 stop_reason / is_error
+    等诊断信息。
+    """
     print(
         f"[analysis] Calling claude --model {model} (corpus {len(prompt_text):,} chars)",
         file=sys.stderr,
     )
 
+    env = {**os.environ, "CLAUDE_CODE_MAX_OUTPUT_TOKENS": _MAX_OUTPUT_TOKENS}
     try:
         result = subprocess.run(
             [
@@ -82,12 +95,15 @@ def _run_claude(prompt_text: str, model: str) -> str:
                 "--strict-mcp-config",
                 "--disable-slash-commands",
                 "--no-session-persistence",
+                "--output-format",
+                "json",
                 "-p",
             ],
             input=prompt_text,
             capture_output=True,
             text=True,
             timeout=1800,
+            env=env,
         )
     except FileNotFoundError:
         raise RuntimeError(
@@ -100,7 +116,37 @@ def _run_claude(prompt_text: str, model: str) -> str:
         err = result.stderr[:500] or result.stdout[:500]
         raise RuntimeError(f"claude CLI exited {result.returncode}: {err}")
 
-    return result.stdout
+    return _parse_claude_json_envelope(result.stdout)
+
+
+def _parse_claude_json_envelope(stdout: str) -> str:
+    """从 ``--output-format json`` 信封中取出 result 文本，并做截断诊断。
+
+    若信封无法解析（旧版 CLI 或非 JSON 输出），回退为原始 stdout（向后兼容）。
+    """
+    try:
+        env = json.loads(stdout)
+    except (ValueError, TypeError):
+        return stdout  # 回退：当作纯文本
+
+    if not isinstance(env, dict) or "result" not in env:
+        return stdout
+
+    if env.get("is_error"):
+        raise RuntimeError(
+            f"claude 返回错误信封: {env.get('subtype') or env.get('api_error_status')}"
+        )
+
+    stop_reason = env.get("stop_reason")
+    if stop_reason and stop_reason not in ("end_turn", "stop_sequence", None):
+        # max_tokens 等 → 报告尾部（含 JSON）可能被截断，告警但不中断
+        print(
+            f"⚠️  claude 输出 stop_reason={stop_reason}，报告可能被截断"
+            f"（已设 max_output_tokens={_MAX_OUTPUT_TOKENS}，如仍触发请调高）。",
+            file=sys.stderr,
+        )
+
+    return env.get("result") or ""
 
 
 def _run_codex(prompt_text: str, model: str | None) -> str:
