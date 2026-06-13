@@ -26,8 +26,14 @@ from .acquisition.identity import synthesize_bio
 from .acquisition.loop import AcquisitionLoop
 from .acquisition.tools.search import search_web
 from .analysis.markers import markers_summary
+from .analysis.narrative import build_narrative_prompt, write_narrative
 from .analysis.prompt import build_prompt
-from .analysis.runner import DEFAULT_CLAUDE_MODEL, AnalysisBackend, run_analysis
+from .analysis.runner import (
+    DEFAULT_CLAUDE_MODEL,
+    AnalysisBackend,
+    run_analysis,
+    run_backend,
+)
 from .analysis.verify import verify_report
 from .corpus.dedupe import independent_ab_count, mark_syndication
 from .dossier import update_dossier
@@ -188,6 +194,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--codex-model", default=None, help="Codex CLI 分析模型")
     parser.add_argument("--output-dir", default="./profiles")
     parser.add_argument("--artifacts-dir", default="./artifacts")
+    parser.add_argument(
+        "--skip-narrative",
+        action="store_true",
+        help="跳过 Step 7.5 特稿版生成（仅 deep mode 默认生成）",
+    )
     return parser
 
 
@@ -198,6 +209,7 @@ def main() -> None:
     base = Path(__file__).parent.parent
     agent_md_path = base / "agent" / "AGENT.md"
     schema_path = base / "references" / "output-schema.md"
+    narrative_tpl_path = base / "references" / "narrative-template.md"
 
     for p in [agent_md_path, schema_path]:
         if not p.exists():
@@ -363,6 +375,48 @@ def main() -> None:
             f"来源不存在 {verification.count('unknown_source')}) → {verify_path}",
             file=sys.stderr,
         )
+
+        # ── Phase 2.6: 特稿版生成（仅 Deep Mode）────────────────────────────
+        if args.mode == "deep" and not args.skip_narrative:
+            if not narrative_tpl_path.exists():
+                print(
+                    f"[narrative] 跳过：模版缺失 {narrative_tpl_path}",
+                    file=sys.stderr,
+                )
+            elif len(markdown) < 1024:
+                print(
+                    "[narrative] 跳过：技术报告异常短，不足以改写特稿",
+                    file=sys.stderr,
+                )
+            else:
+                try:
+                    tech_filename = f"{slug}_{date_str}{suffix_part}.md"
+                    narrative_prompt = build_narrative_prompt(
+                        person=args.person,
+                        purpose=args.purpose,
+                        technical_markdown=markdown,
+                        narrative_template=narrative_tpl_path.read_text(encoding="utf-8"),
+                        verification_summary=(
+                            f"技术版共 {verification.total} 条引证，"
+                            f"通过率 {verification.pass_rate:.0%}"
+                        ),
+                        technical_filename=tech_filename,
+                        technical_json=json_data or "",
+                    )
+                    print(
+                        f"[narrative] 生成特稿版（{backend}, model={model_label}）...",
+                        file=sys.stderr,
+                    )
+                    narrative_text = run_backend(narrative_prompt, backend, model)
+                    narrative_path = write_narrative(
+                        Path(args.output_dir), slug, date_str, narrative_text, suffix,
+                    )
+                    print(f"✓ 特稿   : {narrative_path}", file=sys.stderr)
+                except Exception as exc:
+                    print(
+                        f"[narrative] 特稿生成失败（不影响技术报告）: {exc}",
+                        file=sys.stderr,
+                    )
 
         # ── Phase 3: 人物档案库沉淀 ──────────────────────────────────────────
         if json_data:

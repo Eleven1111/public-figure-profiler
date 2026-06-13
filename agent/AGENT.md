@@ -218,10 +218,12 @@
 
 ---
 
-## Step 7.5：特稿版（仅 Deep Mode）
+## Step 7.5：特稿版（仅 Deep Mode，已自动化）
 
-技术版完成后，按 `references/narrative-template.md` 产出叙事化第二输出，
-文件名 `<人物>_<日期>.特稿.md`。
+技术版完成后，pipeline 自动按 `references/narrative-template.md` 再调一次分析后端，
+产出叙事化第二输出，文件名 `<人物>_<日期>.特稿.md`（`agent/analysis/narrative.py`，
+可用 `--skip-narrative` 关闭）。输入为技术报告 markdown + JSON（不重喂语料，强制"翻译"
+而非"重析"）。
 
 核心规则：
 - 特稿是技术版的**翻译**，不是另一次分析——两版结论必须一致

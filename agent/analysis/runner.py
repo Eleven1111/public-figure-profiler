@@ -15,6 +15,23 @@ AnalysisBackend = Literal["claude", "codex"]
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6"
 
 
+def run_backend(
+    prompt_text: str,
+    backend: AnalysisBackend = "claude",
+    model: str | None = None,
+) -> str:
+    """Spawn an analysis CLI subprocess and return its raw text output.
+
+    The prompt is passed via stdin so there's no shell argument length limit.
+    File writing and JSON extraction are the caller's responsibility.
+    """
+    if backend == "claude":
+        return _run_claude(prompt_text, model or DEFAULT_CLAUDE_MODEL)
+    if backend == "codex":
+        return _run_codex(prompt_text, model)
+    raise ValueError(f"unsupported analysis backend: {backend}")
+
+
 def run_analysis(
     prompt_text: str,
     backend: AnalysisBackend = "claude",
@@ -29,12 +46,7 @@ def run_analysis(
     Returns (markdown, json_or_none).
     The prompt is passed via stdin so there's no shell argument length limit.
     """
-    if backend == "claude":
-        full_text = _run_claude(prompt_text, model or DEFAULT_CLAUDE_MODEL)
-    elif backend == "codex":
-        full_text = _run_codex(prompt_text, model)
-    else:
-        raise ValueError(f"unsupported analysis backend: {backend}")
+    full_text = run_backend(prompt_text, backend, model)
 
     markdown, json_data = _extract_json(full_text)
 
