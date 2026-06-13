@@ -35,19 +35,19 @@ from .dossier import update_dossier
 
 ALL_FRAMEWORKS = [
     "core", "big5", "loc", "cit", "lta", "operational-code",
-    "motives", "values-hierarchy", "interests",
+    "motives", "values-hierarchy", "interests", "depth",
     "ems", "dark-triad",
 ]
-DEFAULT_FRAMEWORKS = ["core", "big5", "loc", "cit", "motives", "values-hierarchy"]
+DEFAULT_FRAMEWORKS = ["core", "big5", "loc", "cit", "motives", "values-hierarchy", "depth"]
 ANALYSIS_BACKENDS = ("claude", "codex", "both")
 OBJECT_TYPE_PRESETS: dict[str, list[str]] = {
     "business": [
         "core", "big5", "loc", "cit", "lta",
-        "motives", "values-hierarchy", "interests",
+        "motives", "values-hierarchy", "interests", "depth",
     ],
     "political": [
         "core", "big5", "loc", "cit", "lta", "operational-code",
-        "motives", "values-hierarchy", "interests",
+        "motives", "values-hierarchy", "interests", "depth",
     ],
     "scholar": DEFAULT_FRAMEWORKS,
     "artist": DEFAULT_FRAMEWORKS,
