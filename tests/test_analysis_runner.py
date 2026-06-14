@@ -207,3 +207,30 @@ def test_run_analysis_writes_raw_stdout_for_forensics(tmp_path):
     raw_file = tmp_path / "test_20260423.raw.txt"
     assert raw_file.exists()
     assert raw_file.read_text() == raw
+
+
+def test_run_claude_retries_on_transient_exit(tmp_path):
+    """瞬时 exit 1（仅 init 事件）后应自动重试并成功。"""
+    fail = MagicMock(returncode=1, stdout='{"type":"system","subtype":"init"}', stderr="")
+    ok = MagicMock(
+        returncode=0,
+        stdout='{"type":"assistant","message":{"content":[{"type":"text","text":"# 报告\n正文"}]}}',
+        stderr="",
+    )
+    with patch("agent.analysis.runner.time.sleep"), \
+         patch("agent.analysis.runner.subprocess.run", side_effect=[fail, ok]) as mock_run:
+        from agent.analysis.runner import _run_claude
+        out = _run_claude("prompt", "claude-sonnet-4-6")
+    assert mock_run.call_count == 2
+    assert "正文" in out
+
+
+def test_run_claude_raises_after_exhausting_retries(tmp_path):
+    fail = MagicMock(returncode=1, stdout="", stderr="boom")
+    import pytest
+    with patch("agent.analysis.runner.time.sleep"), \
+         patch("agent.analysis.runner.subprocess.run", return_value=fail) as mock_run:
+        from agent.analysis.runner import _run_claude, _CLAUDE_RETRIES
+        with pytest.raises(RuntimeError, match="exited 1"):
+            _run_claude("prompt", "claude-sonnet-4-6")
+    assert mock_run.call_count == _CLAUDE_RETRIES + 1

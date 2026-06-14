@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -70,13 +71,21 @@ def run_analysis(
 _MAX_OUTPUT_TOKENS = "64000"
 
 
+_CLAUDE_RETRIES = 2  # 额外重试次数（瞬时 exit / 空输出），共最多 3 次尝试
+
+
 def _run_claude(prompt_text: str, model: str) -> str:
     """Run Claude Code in non-interactive print mode.
 
-    使用 ``--output-format json`` 而非默认的 text 流式输出：text 模式在输出体量
-    很大（约 >30KB）时会丢失开头、只保留尾部（一个捕获层面的缺陷）。JSON 信封把
-    完整结果作为单个字段一次性返回，可绕开该问题，并额外提供 stop_reason / is_error
-    等诊断信息。
+    使用 ``--output-format stream-json`` 并拼接**所有** assistant 文本块。
+
+    根因：当模型输出超过单轮 output-token 上限时，Claude Code 会自动分块续写成
+    多个 assistant 消息。默认 text 输出与 ``--output-format json`` 的 ``.result``
+    都只保留**最后一块**，导致长报告丢失开头、只剩尾部（且尾部 JSON 恰好完整，
+    极具迷惑性）。stream-json 把每一块作为独立事件暴露，逐块拼接即可还原全文。
+
+    连续多次调用 claude 偶发瞬时 exit 1（仅 init 事件即退出）；对非零退出与空输出
+    做有限重试。
     """
     print(
         f"[analysis] Calling claude --model {model} (corpus {len(prompt_text):,} chars)",
@@ -84,69 +93,87 @@ def _run_claude(prompt_text: str, model: str) -> str:
     )
 
     env = {**os.environ, "CLAUDE_CODE_MAX_OUTPUT_TOKENS": _MAX_OUTPUT_TOKENS}
-    try:
-        result = subprocess.run(
-            [
-                "claude",
-                "--model",
-                model,
-                "--mcp-config",
-                '{"mcpServers":{}}',
-                "--strict-mcp-config",
-                "--disable-slash-commands",
-                "--no-session-persistence",
-                "--output-format",
-                "json",
-                "-p",
-            ],
-            input=prompt_text,
-            capture_output=True,
-            text=True,
-            timeout=1800,
-            env=env,
-        )
-    except FileNotFoundError:
-        raise RuntimeError(
-            "claude CLI not found. Install Claude Code: https://claude.ai/code"
-        )
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("claude CLI timed out after 30 minutes")
+    cmd = [
+        "claude", "--model", model,
+        "--mcp-config", '{"mcpServers":{}}',
+        "--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence",
+        "--output-format", "stream-json", "--verbose", "-p",
+    ]
 
-    if result.returncode != 0:
-        err = result.stderr[:500] or result.stdout[:500]
-        raise RuntimeError(f"claude CLI exited {result.returncode}: {err}")
+    last_err = ""
+    for attempt in range(_CLAUDE_RETRIES + 1):
+        try:
+            result = subprocess.run(
+                cmd, input=prompt_text, capture_output=True, text=True,
+                timeout=1800, env=env,
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "claude CLI not found. Install Claude Code: https://claude.ai/code"
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("claude CLI timed out after 30 minutes")
 
-    return _parse_claude_json_envelope(result.stdout)
+        if result.returncode == 0:
+            collected = _collect_stream_json(result.stdout)
+            if collected.strip():
+                return collected
+            last_err = "claude 返回空输出"
+        else:
+            last_err = (
+                f"claude CLI exited {result.returncode}: "
+                f"{(result.stderr[:300] or result.stdout[:300])}"
+            )
+
+        if attempt < _CLAUDE_RETRIES:
+            print(
+                f"⚠️  claude 调用失败（{last_err[:120]}），"
+                f"重试 {attempt + 1}/{_CLAUDE_RETRIES}...",
+                file=sys.stderr,
+            )
+            time.sleep(3 * (attempt + 1))
+
+    raise RuntimeError(last_err)
 
 
-def _parse_claude_json_envelope(stdout: str) -> str:
-    """从 ``--output-format json`` 信封中取出 result 文本，并做截断诊断。
+def _collect_stream_json(stdout: str) -> str:
+    """拼接 stream-json 输出里所有 assistant 消息的 text 块。
 
-    若信封无法解析（旧版 CLI 或非 JSON 输出），回退为原始 stdout（向后兼容）。
+    每行是一个 JSON 事件。assistant 事件的 message.content 含 text 块；按出现顺序
+    拼接所有 text 即为完整报告。若 stdout 不是 stream-json（旧版 CLI / 纯文本），
+    回退为原始 stdout（向后兼容）。同时对错误结果事件抛错。
     """
-    try:
-        env = json.loads(stdout)
-    except (ValueError, TypeError):
-        return stdout  # 回退：当作纯文本
+    _STREAM_EVENT_TYPES = {"system", "assistant", "user", "result", "stream_event"}
+    texts: list[str] = []
+    saw_event = False
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(ev, dict):
+            continue
+        etype = ev.get("type")
+        if etype not in _STREAM_EVENT_TYPES:
+            # 非 stream-json 事件行（例如 markdown 里夹带的合法 JSON 片段）
+            continue
+        saw_event = True
+        if etype == "assistant":
+            for blk in ev.get("message", {}).get("content", []):
+                if isinstance(blk, dict) and blk.get("type") == "text":
+                    texts.append(blk.get("text", ""))
+        elif etype == "result" and ev.get("is_error"):
+            raise RuntimeError(
+                f"claude 返回错误结果: {ev.get('subtype') or ev.get('api_error_status')}"
+            )
 
-    if not isinstance(env, dict) or "result" not in env:
-        return stdout
+    if not saw_event:
+        return stdout  # 回退：非 stream-json，当作纯文本
 
-    if env.get("is_error"):
-        raise RuntimeError(
-            f"claude 返回错误信封: {env.get('subtype') or env.get('api_error_status')}"
-        )
-
-    stop_reason = env.get("stop_reason")
-    if stop_reason and stop_reason not in ("end_turn", "stop_sequence", None):
-        # max_tokens 等 → 报告尾部（含 JSON）可能被截断，告警但不中断
-        print(
-            f"⚠️  claude 输出 stop_reason={stop_reason}，报告可能被截断"
-            f"（已设 max_output_tokens={_MAX_OUTPUT_TOKENS}，如仍触发请调高）。",
-            file=sys.stderr,
-        )
-
-    return env.get("result") or ""
+    return "".join(texts)
 
 
 def _run_codex(prompt_text: str, model: str | None) -> str:
