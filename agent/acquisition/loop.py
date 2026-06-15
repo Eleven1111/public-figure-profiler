@@ -10,7 +10,7 @@ import openai
 
 from .artifacts import Artifact, ArtifactStore
 from .tools.search import (
-    search_web, fetch_content,
+    search_web, search_recent, fetch_content,
     search_weibo, search_zhihu, search_bilibili,
     search_twitter, search_xiaohongshu,
 )
@@ -28,6 +28,21 @@ TOOL_DEFINITIONS = [
         "parameters": {"type": "object", "properties": {
             "query": {"type": "string", "description": "搜索词，包含人名+关键词"},
             "num_results": {"type": "integer", "default": 5, "description": "返回数量"},
+        }, "required": ["query"]},
+    }},
+    {"type": "function", "function": {
+        "name": "search_recent",
+        "description": (
+            "时效性检索：抓取目标人物/其机构的最新动态——官方公告、新发布的博客/文章、"
+            "近期新闻。结果按时间排序（而非相关性）。用于确保信息时效性。"
+        ),
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "搜索词，如「Anthropic 公告 OR Dario Amodei essay」"},
+            "num_results": {"type": "integer", "default": 5},
+            "time_range": {
+                "type": "string", "enum": ["day", "week", "month", "year"],
+                "default": "month", "description": "时间窗口，默认近一个月",
+            },
         }, "required": ["query"]},
     }},
     {"type": "function", "function": {
@@ -118,6 +133,11 @@ TOOL_DEFINITIONS = [
 
 _TOOL_DISPATCH = {
     "search_web": lambda args, ctx: search_web(query=args["query"], num_results=args.get("num_results", 5)),
+    "search_recent": lambda args, ctx: search_recent(
+        query=args["query"],
+        num_results=args.get("num_results", 5),
+        time_range=args.get("time_range", "month"),
+    ),
     "search_youtube": lambda args, ctx: search_youtube(**args),
     "search_podcast": lambda args, ctx: search_podcast(**args),
     "search_weibo": lambda args, ctx: search_weibo(**args),
@@ -319,6 +339,14 @@ class AcquisitionLoop:
 3. 覆盖（C 级）：微博、Twitter/X、小红书内容
 4. 跨语言：同时搜索中文和英文
 
+**时效性（强制）：** 侧写必须反映此人**最新**的状态，不能只有陈旧资料。
+- 先用 `search_recent` 抓取近期动态（默认近一个月，可放宽到 year）：
+  本人最新发布的文章/博客/公开信、其所属机构的官方公告与新闻稿、近期重大新闻。
+- **优先一手官方源**：本人个人站点、其公司/机构的官方 newsroom/blog（例如用
+  `search_web` 配合 `site:` 限定官方域名），这些是最新且最权威的来源。
+- 至少采集 2 条**近 3 个月内**发布的来源；若该人物近期有重大事件/新作，必须覆盖。
+- 注意每条来源的 published_date，明显过时（>2 年）的内容不可作为"现状"依据。
+
 **对抗性语料配额（强制）：** 至少采集 2 条批评性/对立方来源——
 做空报告、诉讼/监管文件、离职员工或竞争对手的评价、深度质疑报道。
 搜索词示例：「{self.person} 争议」「{self.person} 质疑 批评」
@@ -337,6 +365,7 @@ class AcquisitionLoop:
 def _platform_from_tool(tool: str) -> str:
     mapping = {
         "search_web": "web",
+        "search_recent": "web",
         "search_youtube": "youtube",
         "search_podcast": "podcast",
         "search_weibo": "weibo",

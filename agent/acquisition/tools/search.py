@@ -11,19 +11,30 @@ import sys
 import requests
 
 
-def _tavily_search(query: str, num_results: int) -> list[dict]:
+def _tavily_search(
+    query: str,
+    num_results: int,
+    topic: str | None = None,
+    time_range: str | None = None,
+) -> list[dict]:
     api_key = os.environ.get("TAVILY_API_KEY", "")
     if not api_key:
         raise RuntimeError("TAVILY_API_KEY not set")
+    payload = {
+        "api_key": api_key,
+        "query": query,
+        "max_results": num_results,
+        "include_raw_content": True,
+        "search_depth": "advanced",
+    }
+    # 时效性检索：topic=news 让 Tavily 按时间排序，time_range 限定窗口
+    if topic:
+        payload["topic"] = topic
+    if time_range:
+        payload["time_range"] = time_range
     resp = requests.post(
         "https://api.tavily.com/search",
-        json={
-            "api_key": api_key,
-            "query": query,
-            "max_results": num_results,
-            "include_raw_content": True,
-            "search_depth": "advanced",
-        },
+        json=payload,
         timeout=20,
     )
     resp.raise_for_status()
@@ -62,10 +73,15 @@ def _ddg_search(query: str, num_results: int) -> list[dict]:
     return results
 
 
-def _search(query: str, num_results: int) -> list[dict]:
+def _search(
+    query: str,
+    num_results: int,
+    topic: str | None = None,
+    time_range: str | None = None,
+) -> list[dict]:
     """Try Tavily first; fall back to DuckDuckGo; return [] on all failures."""
     try:
-        return _tavily_search(query, num_results)
+        return _tavily_search(query, num_results, topic=topic, time_range=time_range)
     except Exception as exc:
         print(f"[search] Tavily failed ({exc}), falling back to DDG", file=sys.stderr)
     try:
@@ -78,6 +94,15 @@ def _search(query: str, num_results: int) -> list[dict]:
 def search_web(query: str, num_results: int = 5) -> list[dict]:
     """General web search."""
     return _search(query, num_results)
+
+
+def search_recent(query: str, num_results: int = 5, time_range: str = "month") -> list[dict]:
+    """时效性检索：抓取最新动态（官方公告、新发布、近期新闻）。
+
+    使用 Tavily topic=news + time_range 窗口，结果按时间而非相关性排序。
+    time_range ∈ {day, week, month, year}。
+    """
+    return _search(query, num_results, topic="news", time_range=time_range)
 
 
 def fetch_content(url: str) -> str:
