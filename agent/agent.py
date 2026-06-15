@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -403,6 +404,13 @@ def main() -> None:
                         technical_filename=tech_filename,
                         technical_json=json_data or "",
                     )
+                    # 紧接超长分析调用后立即再调会撞限流冷却窗口（仅 init 即 exit 1）。
+                    # 主动冷却一段，避免第一次必然失败、浪费一次尝试。
+                    if backend == "claude":
+                        print(
+                            "[narrative] 分析后冷却 20s（规避限流）...", file=sys.stderr,
+                        )
+                        time.sleep(20)
                     print(
                         f"[narrative] 生成特稿版（{backend}, model={model_label}）...",
                         file=sys.stderr,

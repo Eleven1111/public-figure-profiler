@@ -71,7 +71,10 @@ def run_analysis(
 _MAX_OUTPUT_TOKENS = "64000"
 
 
-_CLAUDE_RETRIES = 2  # 额外重试次数（瞬时 exit / 空输出），共最多 3 次尝试
+_CLAUDE_RETRIES = 3  # 额外重试次数（瞬时 exit / 空输出），共最多 4 次尝试
+# 退避秒数：一次超大/超长调用（如 19 万字语料分析）后，紧接的调用会撞上限流冷却
+# 窗口（>30s），表现为「仅 init 事件即 exit 1」。退避需足够长以等冷却清除。
+_CLAUDE_BACKOFF_SECONDS = [20, 45, 90]
 
 
 def _run_claude(prompt_text: str, model: str) -> str:
@@ -126,12 +129,15 @@ def _run_claude(prompt_text: str, model: str) -> str:
             )
 
         if attempt < _CLAUDE_RETRIES:
+            backoff = _CLAUDE_BACKOFF_SECONDS[
+                min(attempt, len(_CLAUDE_BACKOFF_SECONDS) - 1)
+            ]
             print(
                 f"⚠️  claude 调用失败（{last_err[:120]}），"
-                f"重试 {attempt + 1}/{_CLAUDE_RETRIES}...",
+                f"{backoff}s 后重试 {attempt + 1}/{_CLAUDE_RETRIES}...",
                 file=sys.stderr,
             )
-            time.sleep(3 * (attempt + 1))
+            time.sleep(backoff)
 
     raise RuntimeError(last_err)
 
