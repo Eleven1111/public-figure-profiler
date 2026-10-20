@@ -2116,10 +2116,10 @@ Expected: all tests pass (test_artifacts, test_identity, test_tools_search, test
 - [ ] **Step 4: Smoke test end-to-end (optional but recommended)**
 
 ```bash
-DASHSCOPE_API_KEY="sk-sp-289ef966bb4040cdb893e1767811dca5" \
+DASHSCOPE_API_KEY="<your-dashscope-key>" \
 DASHSCOPE_BASE_URL="https://coding.dashscope.aliyuncs.com/v1" \
 DASHSCOPE_MODEL="qwen3.5-plus" \
-TAVILY_API_KEY="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" \
+TAVILY_API_KEY="<your-tavily-key>" \
 python -m agent.agent \
   --person "Sam Altman" \
   --mode quick \

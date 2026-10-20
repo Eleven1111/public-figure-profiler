@@ -310,7 +310,7 @@ httpx>=0.27.0             # 异步 HTTP 客户端
 TAVILY_API_KEY=...           # Web 搜索
 
 # 新增（Qwen acquisition agent）
-DASHSCOPE_API_KEY=sk-sp-289ef966bb4040cdb893e1767811dca5
+DASHSCOPE_API_KEY=<your-dashscope-key>
 DASHSCOPE_BASE_URL=https://coding.dashscope.aliyuncs.com/v1
 
 # 可选
